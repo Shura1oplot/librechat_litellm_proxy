@@ -1,0 +1,66 @@
+model_list:
+  - model_name: x-gpt-5
+    litellm_params:
+      model: openai-bridge/x-gpt-5
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: gpt-5
+      response_prefix: ":test:"
+      tools:
+        - type: web_search
+
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+
+  - model_name: x-sonar-pro
+    litellm_params:
+      model: perplexity-bridge/x-sonar-pro
+      outbound_model: sonar-pro
+
+  - model_name: x-sonar-pro-high
+    litellm_params:
+      model: perplexity-bridge/x-sonar-pro-high
+      outbound_model: sonar-pro
+      web_search_options:
+        search_context_size: high
+
+  - model_name: x-sonar-reasoning-pro
+    litellm_params:
+      model: perplexity-bridge/x-sonar-reasoning-pro
+      allowed_openai_params:
+        - reasoning_effort
+      reasoning_effort: high
+      outbound_model: sonar-reasoning-pro
+      cut_think: true
+
+  - model_name: x-sonar-reasoning-pro-high
+    litellm_params:
+      model: perplexity-bridge/x-sonar-reasoning-pro-high
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-reasoning-pro
+      reasoning_effort: high
+      web_search_options:
+        search_context_size: high
+      cut_think: true
+
+  - model_name: sonar-pro
+    litellm_params:
+      model: perplexity/sonar-pro
+
+  - model_name: sonar-reasoning-pro
+    litellm_params:
+      model: perplexity/sonar-reasoning-pro
+
+
+litellm_settings:
+  custom_provider_map:
+    - provider: openai-bridge
+      custom_handler: custom_handler.openai_responses_bridge
+    - provider: perplexity-bridge
+      custom_handler: custom_handler.perplexity_bridge
+
+
+general_settings:
+  enable_preview_features: true

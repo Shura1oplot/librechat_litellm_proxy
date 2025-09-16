@@ -1,0 +1,66 @@
+[tool.black]
+target-version = ["py313"]
+line-length = 90
+exclude = '''
+/(
+    \.venv
+  | venv
+  | __pycache__
+  | tests
+)/
+'''
+
+[tool.ruff]
+target-version = "py313"
+line-length = 90
+exclude = [
+    ".venv",
+    "venv",
+    "__pycache__",
+    "tests",
+]
+
+[tool.pylint.format]
+max-line-length = 90
+
+[tool.pylint.messages_control]
+disable = [
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-locals",
+    "broad-exception-raised",
+    "missing-module-docstring",
+    "missing-function-docstring",
+    "missing-class-docstring",
+]
+
+[tool.pylint.main]
+ignore-paths = [
+    "tests/.*",
+    ".venv/.*",
+    "venv/.*",
+    "__pycache__/.*",
+]
+
+[tool.basedpyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+exclude = [
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/tests/**",
+]
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+reportAttributeAccessIssue = false
+reportUnnecessaryComparison = false
+reportImplicitOverride = false
+reportExplicitAny = false
+reportAny = false
+
+[tool.mccabe]
+max-complexity = 10

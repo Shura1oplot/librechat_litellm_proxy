@@ -1,0 +1,6 @@
+openai
+pylint
+basedpyright
+ruff
+black
+mccabe
