@@ -35,12 +35,258 @@ class OpenAIResponsesBridge(CustomLLM):
         self.openai_client = OpenAI()
         self.async_openai_client = AsyncOpenAI()
 
-    def _get_input_from_messages(self, messages: list[dict[str, Any]]) -> str:
+    def _get_input_from_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         for message in reversed(messages):
-            if message.get("role") == "user":
-                return str(message["content"])
+            if message.get("role") != "user":
+                continue
 
-        raise ValueError("No user message found in messages")
+            content_items = self._build_message_content(message)
+
+            if not content_items:
+                continue
+
+            return [{"role": "user", "content": content_items}]
+
+        raise ValueError("No user message with content found in messages")
+
+    def _build_message_content(self, message: dict[str, Any]) -> list[Any]:
+        content_items = self._normalize_content_field(message.get("content"))
+
+        attachments = self._collect_attachment_items(message)
+
+        if attachments:
+            content_items.extend(attachments)
+
+        return content_items
+
+    def _normalize_content_field(self, content: Any) -> list[Any]:
+        if content is None:
+            return []
+
+        if isinstance(content, str):
+            return self._build_text_content({"text": content})
+
+        if isinstance(content, list):
+            normalized: list[Any] = []
+
+            for item in content:
+                normalized.extend(self._normalize_content_item(item))
+
+            return normalized
+
+        return self._build_text_content({"text": str(content)})
+
+    def _normalize_content_item(self, item: Any) -> list[Any]:
+        if item is None:
+            return []
+
+        if isinstance(item, str):
+            return self._build_text_content({"text": item})
+
+        if not isinstance(item, dict):
+            return self._build_text_content({"text": str(item)})
+
+        item_type = str(item.get("type") or "")
+
+        selected_builder: Callable[[dict[str, Any]], list[Any]] | None
+
+        if item_type in ("text", "input_text", ""):
+            selected_builder = self._build_text_content
+        else:
+            builders: dict[str, Callable[[dict[str, Any]], list[Any]]] = {
+                "input_image": self._build_image_content,
+                "image_url": self._build_image_content,
+                "image": self._build_image_content,
+                "input_file": self._build_file_content,
+                "file": self._build_file_content,
+                "document": self._build_file_content,
+                "input_audio": self._build_audio_content,
+                "audio": self._build_audio_content,
+            }
+
+            selected_builder = builders.get(item_type)
+
+            if selected_builder is None:
+                if "image_url" in item:
+                    selected_builder = self._build_image_content
+                elif any(key in item for key in ("file_id", "file_url", "file_data")):
+                    selected_builder = self._build_file_content
+                elif "text" in item:
+                    selected_builder = self._build_text_content
+                else:
+                    selected_builder = None
+
+        if selected_builder is None:
+            return self._build_text_content({"text": str(item)})
+
+        return selected_builder(item)
+
+    def _build_text_content(self, item: dict[str, Any]) -> list[Any]:
+        text = item.get("text")
+
+        if text is None:
+            text = item.get("value") or item.get("content")
+
+        if text is None:
+            return []
+
+        return [{"type": "input_text", "text": str(text)}]
+
+    def _build_image_content(self, item: dict[str, Any]) -> list[Any]:
+        detail = self._extract_image_detail(item)
+        file_id = self._first_non_empty(item, ("file_id", "id"))
+        image_url, detail_from_url = self._extract_image_url(item.get("image_url"))
+
+        if not detail and detail_from_url:
+            detail = detail_from_url
+
+        if not image_url:
+            direct_url = item.get("url")
+
+            if isinstance(direct_url, str):
+                image_url = direct_url
+
+        if not file_id and not image_url:
+            base64_data = item.get("image_base64") or item.get("b64_json")
+
+            if base64_data:
+                mime_type = item.get("mime_type") or item.get("media_type") or "image/png"
+                image_url = f"data:{mime_type};base64,{base64_data}"
+
+        image_item: dict[str, Any] = {"type": "input_image"}
+
+        if detail in {"low", "high", "auto"}:
+            image_item["detail"] = detail
+
+        if file_id:
+            image_item["file_id"] = str(file_id)
+
+        if image_url:
+            image_item["image_url"] = str(image_url)
+
+        return [image_item]
+
+    def _extract_image_detail(self, item: dict[str, Any]) -> str | None:
+        detail = item.get("detail")
+
+        if detail in {"low", "high", "auto"}:
+            return cast(str, detail)
+
+        return None
+
+    def _extract_image_url(self, value: Any) -> tuple[str | None, str | None]:
+        if isinstance(value, dict):
+            url = value.get("url") or value.get("image_url") or value.get("href")
+            detail = value.get("detail")
+
+            return (
+                str(url) if isinstance(url, str) else None,
+                detail if isinstance(detail, str) else None,
+            )
+
+        if isinstance(value, str):
+            return (value, None)
+
+        return (None, None)
+
+    def _build_file_content(self, item: dict[str, Any]) -> list[Any]:
+        file_item: dict[str, Any] = {"type": "input_file"}
+
+        file_id = self._first_non_empty(item, ("file_id", "id"))
+
+        if file_id:
+            file_item["file_id"] = str(file_id)
+
+        file_url = item.get("file_url") or item.get("url")
+
+        if isinstance(file_url, str):
+            file_item["file_url"] = file_url
+
+        file_data = item.get("file_data")
+
+        if isinstance(file_data, str):
+            file_item["file_data"] = file_data
+
+        filename = item.get("filename")
+
+        if isinstance(filename, str):
+            file_item["filename"] = filename
+
+        return [file_item]
+
+    def _build_audio_content(self, item: dict[str, Any]) -> list[Any]:
+        audio_payload = item.get("input_audio")
+
+        if not isinstance(audio_payload, dict):
+            audio_payload = {
+                "data": item.get("data"),
+                "format": item.get("format"),
+            }
+
+        data = audio_payload.get("data")
+
+        if not isinstance(data, str) or not data:
+            return []
+
+        format_hint = audio_payload.get("format")
+
+        if not isinstance(format_hint, str) or not format_hint:
+            format_hint = "wav"
+
+        return [
+            {
+                "type": "input_audio",
+                "input_audio": {"data": data, "format": format_hint},
+            }
+        ]
+
+    def _collect_attachment_items(self, message: dict[str, Any]) -> list[Any]:
+        attachment_items: list[Any] = []
+
+        for key in ("attachments", "files", "documents"):
+            entries = message.get(key)
+
+            if isinstance(entries, list):
+                for attachment in entries:
+                    attachment_items.extend(self._file_items_from_any(attachment))
+            elif entries is not None:
+                attachment_items.extend(self._file_items_from_any(entries))
+
+        attachment_items.extend(self._file_items_from_any(message.get("file_ids")))
+        attachment_items.extend(self._file_items_from_any(message.get("file")))
+
+        return attachment_items
+
+    def _file_items_from_any(self, value: Any) -> list[Any]:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            return [{"type": "input_file", "file_id": value}]
+
+        if isinstance(value, list):
+            file_items: list[Any] = []
+
+            for entry in value:
+                file_items.extend(self._file_items_from_any(entry))
+
+            return file_items
+
+        if isinstance(value, dict):
+            return self._build_file_content(value)
+
+        return []
+
+    def _first_non_empty(self, item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+        for key in keys:
+            value = item.get(key)
+
+            if value:
+                return value
+
+        return None
 
     def _get_instructions_from_messages(
         self, messages: list[dict[str, Any]]
