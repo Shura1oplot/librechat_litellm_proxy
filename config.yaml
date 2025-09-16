@@ -13,6 +13,34 @@ model_list:
     litellm_params:
       model: openai/gpt-5
 
+  - model_name: x-o4-mini-deep-research
+    litellm_params:
+      model: openai-bridge/x-o4-mini-deep-research
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: o4-mini-deep-research
+      response_prefix: ":test:"
+      tools:
+        - type: web_search
+
+  - model_name: x-o3-deep-research
+    litellm_params:
+      model: openai-bridge/x-o3-deep-research
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: o3-deep-research
+      response_prefix: ":test:"
+      tools:
+        - type: web_search
+
+  - model_name: o4-mini-deep-research
+    litellm_params:
+      model: openai/o4-mini-deep-research
+
+  - model_name: o3-deep-research
+    litellm_params:
+      model: openai/o3-deep-research
+
   - model_name: x-sonar-pro
     litellm_params:
       model: perplexity-bridge/x-sonar-pro
@@ -44,6 +72,30 @@ model_list:
       web_search_options:
         search_context_size: high
       cut_think: true
+
+  - model_name: x-sonar-deep-research
+    litellm_params:
+      model: perplexity-bridge/x-sonar-deep-research
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-deep-research
+      reasoning_effort: high
+      cut_think: true
+
+  - model_name: x-sonar-deep-research-high
+    litellm_params:
+      model: perplexity-bridge/x-sonar-deep-research-high
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-deep-research
+      reasoning_effort: high
+      web_search_options:
+        search_context_size: high
+      cut_think: true
+
+  - model_name: sonar-deep-research
+    litellm_params:
+      model: perplexity/sonar-deep-research
 
   - model_name: sonar-pro
     litellm_params:
