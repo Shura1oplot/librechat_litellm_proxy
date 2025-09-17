@@ -26,14 +26,16 @@ DEFAULT_HEARTBEAT_MARKER = "."
 STREAMING_CHUNK_SIZE = 50
 STREAMING_CHUNK_DELAY = 0.02
 
+OPENAI_CLIENT_TIMEOUT = 30 * 60
+
 
 class OpenAIResponsesBridge(CustomLLM):
 
     def __init__(self) -> None:
         super().__init__()
 
-        self.openai_client = OpenAI()
-        self.async_openai_client = AsyncOpenAI()
+        self.openai_client = OpenAI(timeout=OPENAI_CLIENT_TIMEOUT)
+        self.async_openai_client = AsyncOpenAI(timeout=OPENAI_CLIENT_TIMEOUT)
 
     def _get_input_from_messages(self, messages: list[dict[str, Any]]) -> str:
         for message in reversed(messages):
