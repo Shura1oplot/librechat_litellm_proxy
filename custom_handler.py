@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 
 import asyncio
-import concurrent.futures
-import queue
-import threading
 import time
 from typing import Any, Callable, cast
 from collections.abc import Iterator, AsyncIterator
@@ -11,7 +8,7 @@ import re
 
 import httpx
 
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI, Response
 
 import litellm
 from litellm.llms.custom_llm import CustomLLM
@@ -26,26 +23,33 @@ DEFAULT_HEARTBEAT_MARKER = "."
 STREAMING_CHUNK_SIZE = 50
 STREAMING_CHUNK_DELAY = 0.02
 
-OPENAI_CLIENT_TIMEOUT = 30 * 60
+BACKGROUND_POLL_INTERVAL = 5.0
 
 
 class OpenAIResponsesBridge(CustomLLM):
 
-    def __init__(self) -> None:
-        super().__init__()
-
-        self.openai_client = OpenAI(timeout=OPENAI_CLIENT_TIMEOUT)
-        self.async_openai_client = AsyncOpenAI(timeout=OPENAI_CLIENT_TIMEOUT)
-
-    def _get_input_from_messages(self, messages: list[dict[str, Any]]) -> str:
+    @staticmethod
+    def _get_input_from_messages(messages: list[dict[str, Any]]) -> str:
         for message in reversed(messages):
-            if message.get("role") == "user":
+            if message["role"] == "user":
                 return str(message["content"])
 
-        raise ValueError("No user message found in messages")
+        raise ValueError(messages)
 
+    @staticmethod
+    def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
+        for message in messages:
+            if message["role"] == "user":
+                match = re.search(r"<conv_id=(.*)>", str(message["content"]))
+
+                if match:
+                    return match.group(1)
+
+        return None
+
+    @staticmethod
     def _get_instructions_from_messages(
-        self, messages: list[dict[str, Any]]
+        messages: list[dict[str, Any]]
     ) -> str | None:
         for message in messages:
             if message.get("role") == "system":
@@ -53,20 +57,8 @@ class OpenAIResponsesBridge(CustomLLM):
 
         return None
 
-    def _heartbeat(
-        self,
-        stop_event: threading.Event,
-        heartbeat_queue: queue.Queue,
-        heartbeat_event: threading.Event,
-        heartbeat_interval: float,
-        heartbeat_marker: str,
-    ) -> None:
-        while not stop_event.wait(heartbeat_interval):
-            if not stop_event.is_set():
-                heartbeat_queue.put(heartbeat_marker)
-                heartbeat_event.set()
-
-    def _extract_response_text(self, response: Any) -> str:
+    @staticmethod
+    def _extract_response_text(response: Any) -> str:
         if hasattr(response, "output") and response.output:
             for output_item in response.output:
                 if hasattr(output_item, "content") and output_item.content:
@@ -79,29 +71,22 @@ class OpenAIResponsesBridge(CustomLLM):
 
         return str(response)
 
-    def _convert_response_to_completion(
-        self,
-        response: Any,
-        model: str,
-    ) -> dict[str, Any]:
-        completion_response = {
-            "id": f"chatcmpl-{response.id}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": self._extract_response_text(response),
-                    },
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        }
-        return completion_response
+    @staticmethod
+    async def _background_responses(aclient: AsyncOpenAI, _id: str) -> Response:
+        while True:
+            response = await aclient.responses.retrieve(_id)
+
+            if response.status in {"in_progress", "queued"}:
+                await asyncio.sleep(BACKGROUND_POLL_INTERVAL)
+                continue
+
+            if response.status in {"failed", "cancelled", "incomplete"}:
+                raise ValueError(response)
+
+            if response.status == "completed":
+                return response
+
+            raise ValueError(response)
 
     def completion(
         self,
@@ -122,51 +107,7 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: HTTPHandler | None = None,
     ) -> ModelResponse:
-        responses_params = {
-            "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
-            "instructions": self._get_instructions_from_messages(messages),
-            "input": self._get_input_from_messages(messages),
-        }
-
-        if optional_params.get("tools"):
-            responses_params["tools"] = optional_params["tools"]
-
-        if optional_params.get("reasoning_effort"):
-            responses_params["reasoning"] = {
-                "effort": optional_params["reasoning_effort"]
-            }
-
-        response = self.openai_client.responses.create(**responses_params)
-
-        completion_dict = self._convert_response_to_completion(response, model)
-
-        prefix = optional_params.get("response_prefix", "")
-
-        if prefix:
-            prefix = prefix + "\n"
-
-        content = completion_dict["choices"][0]["message"]["content"]
-
-        model_response.choices = [
-            litellm.Choices(
-                finish_reason=completion_dict["choices"][0]["finish_reason"],
-                index=completion_dict["choices"][0]["index"],
-                message=litellm.Message(
-                    role=completion_dict["choices"][0]["message"]["role"],
-                    content=prefix + content,
-                ),
-            )
-        ]
-
-        model_response.model = completion_dict["model"]
-
-        model_response.usage = litellm.Usage(
-            completion_tokens=completion_dict["usage"]["completion_tokens"],
-            prompt_tokens=completion_dict["usage"]["prompt_tokens"],
-            total_tokens=completion_dict["usage"]["total_tokens"],
-        )
-
-        return model_response
+        raise NotImplementedError()
 
     async def acompletion(
         self,
@@ -187,51 +128,7 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> ModelResponse:
-        responses_params = {
-            "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
-            "instructions": self._get_instructions_from_messages(messages),
-            "input": self._get_input_from_messages(messages),
-        }
-
-        if optional_params.get("tools"):
-            responses_params["tools"] = optional_params["tools"]
-
-        if optional_params.get("reasoning_effort"):
-            responses_params["reasoning"] = {
-                "effort": optional_params["reasoning_effort"]
-            }
-
-        response = await self.async_openai_client.responses.create(**responses_params)
-
-        completion_dict = self._convert_response_to_completion(response, model)
-
-        prefix = optional_params.get("response_prefix", "")
-
-        if prefix:
-            prefix = prefix + "\n"
-
-        content = completion_dict["choices"][0]["message"]["content"]
-
-        model_response.choices = [
-            litellm.Choices(
-                finish_reason=completion_dict["choices"][0]["finish_reason"],
-                index=completion_dict["choices"][0]["index"],
-                message=litellm.Message(
-                    role=completion_dict["choices"][0]["message"]["role"],
-                    content=prefix + content,
-                ),
-            )
-        ]
-
-        model_response.model = completion_dict["model"]
-
-        model_response.usage = litellm.Usage(
-            completion_tokens=completion_dict["usage"]["completion_tokens"],
-            prompt_tokens=completion_dict["usage"]["prompt_tokens"],
-            total_tokens=completion_dict["usage"]["total_tokens"],
-        )
-
-        return model_response
+        raise NotImplementedError()
 
     def streaming(
         self,
@@ -252,113 +149,7 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: HTTPHandler | None = None,
     ) -> Iterator[GenericStreamingChunk]:
-        responses_params = {
-            "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
-            "instructions": self._get_instructions_from_messages(messages),
-            "input": self._get_input_from_messages(messages),
-        }
-
-        if optional_params.get("tools"):
-            responses_params["tools"] = optional_params["tools"]
-
-        if optional_params.get("reasoning_effort"):
-            responses_params["reasoning"] = {
-                "effort": optional_params["reasoning_effort"]
-            }
-
-        prefix = optional_params.get("response_prefix", "")
-
-        if prefix:
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": prefix + "\n",
-                "tool_use": None,
-                "usage": None,
-            }
-
-        stop_event = threading.Event()
-        heartbeat_queue = queue.Queue()
-        heartbeat_event = threading.Event()
-
-        heartbeat_thread = threading.Thread(
-            target=self._heartbeat,
-            args=[
-                stop_event,
-                heartbeat_queue,
-                heartbeat_event,
-                optional_params.get("heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL),
-                optional_params.get("heartbeat_marker", DEFAULT_HEARTBEAT_MARKER),
-            ],
-        )
-        heartbeat_thread.daemon = True
-        heartbeat_thread.start()
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                self.openai_client.responses.create, **responses_params
-            )
-
-            while not future.done():
-                try:
-                    yield {
-                        "finish_reason": "",
-                        "index": 0,
-                        "is_finished": False,
-                        "text": heartbeat_queue.get(timeout=0.1),
-                        "tool_use": None,
-                        "usage": None,
-                    }
-
-                except queue.Empty:
-                    pass
-
-            response = future.result()
-
-        stop_event.set()
-
-        if heartbeat_thread.is_alive():
-            heartbeat_thread.join(timeout=1.0)
-
-        output_text = self._extract_response_text(response)
-
-        if heartbeat_event.is_set():
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": "\n",
-                "tool_use": None,
-                "usage": None,
-            }
-
-        for i in range(0, len(output_text), STREAMING_CHUNK_SIZE):
-            chunk_text = output_text[i : i + STREAMING_CHUNK_SIZE]
-
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": chunk_text,
-                "tool_use": None,
-                "usage": None,
-            }
-
-            time.sleep(STREAMING_CHUNK_DELAY)
-
-        yield {
-            "finish_reason": "stop",
-            "index": 0,
-            "is_finished": True,
-            "text": "",
-            "tool_use": None,
-            "usage": {  # TODO
-                "completion_tokens": 0,
-                "prompt_tokens": 0,
-                "total_tokens": 0,
-            },
-        }
+        raise NotImplementedError()
 
     async def astreaming(
         self,
@@ -379,21 +170,32 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
+        outbound_aclient = AsyncOpenAI(api_key=api_key)
+
+        background = optional_params.get("background", False)
+
         responses_params = {
             "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
             "instructions": self._get_instructions_from_messages(messages),
             "input": self._get_input_from_messages(messages),
         }
 
-        if optional_params.get("tools"):
-            responses_params["tools"] = optional_params["tools"]
+        if background:
+            responses_params["background"] = True
 
-        if optional_params.get("reasoning_effort"):
+        try:
+            responses_params["tools"] = optional_params["tools"]
+        except KeyError:
+            pass
+
+        try:
             responses_params["reasoning"] = {
                 "effort": optional_params["reasoning_effort"]
             }
+        except KeyError:
+            pass
 
-        prefix = optional_params.get("response_prefix", "")
+        prefix = optional_params.get("response_prefix", "").strip()
 
         if prefix:
             yield {
@@ -405,9 +207,34 @@ class OpenAIResponsesBridge(CustomLLM):
                 "usage": None,
             }
 
-        response_task = asyncio.create_task(
-            self.async_openai_client.responses.create(**responses_params)
-        )
+        conversation_id = self._get_conversation_id(messages)
+        new_conv_id = conversation_id is None
+
+        if not conversation_id:
+            conversation_id = await outbound_aclient.conversations.create()
+
+        responses_params["conversation"] = conversation_id
+
+        if new_conv_id:
+            yield {
+                "finish_reason": "",
+                "index": 0,
+                "is_finished": False,
+                "text": f"<conv_id={conversation_id}>\n",
+                "tool_use": None,
+                "usage": None,
+            }
+
+        if background:
+            response_task = asyncio.create_task(self._background_responses(
+                outbound_aclient,
+                await outbound_aclient.responses.create(**responses_params)
+            ))
+
+        else:
+            response_task = asyncio.create_task(
+                self.async_openai_client.responses.create(**responses_params)
+            )
 
         has_heartbeat = False
 
@@ -520,46 +347,7 @@ class PerplexityBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: HTTPHandler | None = None,
     ) -> ModelResponse:
-        outbound_model = optional_params.pop("outbound_model")
-        cut_think = optional_params.pop("cut_think", False)
-
-        completion_params = {
-            "model": f"perplexity/{outbound_model}",
-            "messages": messages,
-            "api_key": api_key,
-            **optional_params,
-        }
-
-        response = litellm.completion(**completion_params)
-
-        content = response.choices[0].message.content or ""
-
-        if cut_think:
-            content = re.sub(
-                r"^<think>.*?</think>", "", content, count=1, flags=re.DOTALL
-            )
-
-        search_results = getattr(response, "search_results", None)
-
-        if search_results:
-            formatted_sources = self._format_search_results(search_results)
-            content = content + formatted_sources
-
-        model_response.choices = [
-            litellm.Choices(
-                finish_reason=response.choices[0].finish_reason,
-                index=response.choices[0].index,
-                message=litellm.Message(
-                    role="assistant",
-                    content=content,
-                ),
-            )
-        ]
-
-        model_response.model = response.model
-        model_response.usage = response.usage
-
-        return model_response
+        raise NotImplementedError()
 
     async def acompletion(
         self,
@@ -580,46 +368,7 @@ class PerplexityBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> ModelResponse:
-        outbound_model = optional_params.pop("outbound_model")
-        cut_think = optional_params.pop("cut_think", False)
-
-        completion_params = {
-            "model": f"perplexity/{outbound_model}",
-            "messages": messages,
-            "api_key": api_key,
-            **optional_params,
-        }
-
-        response = await litellm.acompletion(**completion_params)
-
-        content = response.choices[0].message.content or ""
-
-        if cut_think:
-            content = re.sub(
-                r"^<think>.*?</think>", "", content, count=1, flags=re.DOTALL
-            )
-
-        search_results = getattr(response, "search_results", None)
-
-        if search_results:
-            formatted_sources = self._format_search_results(search_results)
-            content = content + formatted_sources
-
-        model_response.choices = [
-            litellm.Choices(
-                finish_reason=response.choices[0].finish_reason,
-                index=response.choices[0].index,
-                message=litellm.Message(
-                    role="assistant",
-                    content=content,
-                ),
-            )
-        ]
-
-        model_response.model = response.model
-        model_response.usage = response.usage
-
-        return model_response
+        raise NotImplementedError()
 
     def streaming(
         self,
@@ -640,92 +389,7 @@ class PerplexityBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: HTTPHandler | None = None,
     ) -> Iterator[GenericStreamingChunk]:
-        outbound_model = optional_params.pop("outbound_model")
-        cut_think = optional_params.pop("cut_think", False)
-        heartbeat_marker = optional_params.pop(
-            "heartbeat_marker", DEFAULT_HEARTBEAT_MARKER
-        )
-        heartbeat_interval = optional_params.pop(
-            "heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL
-        )
-
-        completion_params = {
-            "model": f"perplexity/{outbound_model}",
-            "messages": messages,
-            "api_key": api_key,
-            "stream": True,
-            **optional_params,
-        }
-
-        stream_response = litellm.completion(**completion_params)
-
-        accumulated_search_results = None
-
-        in_think = False
-        think_is_cut = False
-        has_heartbeat = False
-        last_heartbeat_time = 0.0
-
-        for chunk in stream_response:
-            if hasattr(chunk, "search_results") and chunk.search_results:
-                accumulated_search_results = chunk.search_results
-
-            if not chunk.choices or not chunk.choices[0].delta:
-                continue
-
-            delta = chunk.choices[0].delta
-            content = getattr(delta, "content", "") or ""
-
-            finish_reason = chunk.choices[0].finish_reason
-
-            is_finished = finish_reason is not None
-
-            if not is_finished:
-                if cut_think and not think_is_cut:
-                    if "<think>" in content:
-                        in_think = True
-                        content = None
-
-                    elif "</think>" in content:
-                        in_think = False
-                        think_is_cut = True
-
-                        if has_heartbeat:
-                            content = "\n"
-                        else:
-                            content = None
-
-                    elif in_think:
-                        current_time = time.time()
-
-                        if current_time - last_heartbeat_time >= heartbeat_interval:
-                            content = heartbeat_marker
-                            has_heartbeat = True
-                            last_heartbeat_time = current_time
-
-                        else:
-                            content = None
-
-            else:
-                if accumulated_search_results:
-                    formatted_sources = self._format_search_results(
-                        accumulated_search_results
-                    )
-                    content = content + formatted_sources
-
-            if content is not None:
-                yield {
-                    "finish_reason": finish_reason or "",
-                    "index": 0,
-                    "is_finished": is_finished,
-                    "text": content,
-                    "tool_use": None,
-                    "usage": {  # TODO
-                        "completion_tokens": 0,
-                        "prompt_tokens": 0,
-                        "total_tokens": 0,
-                    },
-                }
+        raise NotImplementedError()
 
     async def astreaming(
         self,

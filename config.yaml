@@ -2,6 +2,7 @@ model_list:
   - model_name: x-gpt-5
     litellm_params:
       model: openai-bridge/x-gpt-5
+      api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
       tools:
@@ -12,6 +13,7 @@ model_list:
   - model_name: x-gpt-5-thinking
     litellm_params:
       model: openai-bridge/x-gpt-5-thinking
+      api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
       reasoning_effort: medium
@@ -23,18 +25,15 @@ model_list:
   - model_name: x-gpt-5-thinking-high
     litellm_params:
       model: openai-bridge/x-gpt-5-thinking-high
+      api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
       reasoning_effort: high
       tools:
         - type: web_search
       outbound_model: gpt-5
+      background: true
       response_prefix: ":test:"
-  
-  - model_name: gpt-5
-    litellm_params:
-      model: openai/gpt-5
-      api_key: os.environ/OPENAI_API_KEY
 
   - model_name: gpt-5-mini
     litellm_params:
@@ -44,32 +43,26 @@ model_list:
   - model_name: x-o4-mini-deep-research
     litellm_params:
       model: openai-bridge/x-o4-mini-deep-research
+      api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
       tools:
         - type: web_search_preview
       outbound_model: o4-mini-deep-research
+      background: true
       response_prefix: ":test:"
 
   - model_name: x-o3-deep-research
     litellm_params:
       model: openai-bridge/x-o3-deep-research
+      api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
       tools:
         - type: web_search_preview
       outbound_model: o3-deep-research
+      background: true
       response_prefix: ":test:"
-
-  - model_name: o4-mini-deep-research
-    litellm_params:
-      model: openai/o4-mini-deep-research
-      api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: o3-deep-research
-    litellm_params:
-      model: openai/o3-deep-research
-      api_key: os.environ/OPENAI_API_KEY
 
   - model_name: x-sonar-pro
     litellm_params:

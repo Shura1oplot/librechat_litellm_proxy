@@ -28,24 +28,6 @@ HEARTBEAT_MARKER = "."
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 
 
-def test_chat_nonstream() -> None:
-    print("chat.completions stream=false")
-
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": "Be concise."},
-            {
-                "role": "user",
-                "content": "Give a 5-bullet summary of the Kuhn-Munkres algorithm.",
-            },
-        ],
-        max_completion_tokens=MAX_COMPLETION_TOKENS,
-    )
-
-    print(resp.choices[0].message.content)
-
-
 def test_chat_stream_direct() -> None:
     print("chat.completions stream=true, reasoning_effort=high, tools=[web_search]")
 
@@ -101,20 +83,6 @@ def test_chat_stream_proxy() -> None:
     print(f"\nProxy Duration: {proxy_duration:.2f}s")
 
 
-def test_perplexity_nonstream(model: str) -> None:
-    print("Perplexity in non-streaming mode...")
-
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "user", "content": "What are the latest AI developments in 2024?"}
-        ],
-        max_tokens=4096,
-    )
-
-    print(resp.choices[0].message.content)
-
-
 def test_perplexity_stream(model: str) -> None:
     print("Perplexity streaming...")
 
@@ -133,10 +101,7 @@ def test_perplexity_stream(model: str) -> None:
 
 
 if __name__ == "__main__":
-    # test_chat_nonstream()
     # test_chat_stream_direct()
-    # test_chat_stream_proxy()
-    # test_perplexity_nonstream("x-sonar-pro")
-    # test_perplexity_nonstream("x-sonar-reasoning-pro")
+    test_chat_stream_proxy()
     # test_perplexity_stream("x-sonar-pro")
-    test_perplexity_stream("x-sonar-reasoning-pro-high")
+    # test_perplexity_stream("x-sonar-reasoning-pro-high")
