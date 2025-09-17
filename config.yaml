@@ -19,9 +19,6 @@ model_list:
       allowed_openai_params:
         - reasoning_effort
       outbound_model: o4-mini-deep-research
-      response_prefix: ":test:"
-      tools:
-        - type: web_search
 
   - model_name: x-o3-deep-research
     litellm_params:
@@ -29,9 +26,6 @@ model_list:
       allowed_openai_params:
         - reasoning_effort
       outbound_model: o3-deep-research
-      response_prefix: ":test:"
-      tools:
-        - type: web_search
 
   - model_name: o4-mini-deep-research
     litellm_params:
