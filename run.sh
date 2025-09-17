@@ -1,9 +1,11 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-# shellcheck disable=SC1091
-[ -f .env ] && set -a && source .env && set +a
+. ./.venv/bin/activate
+
+[ -f .env ] && set -a && . ./.env && set +a
 
 litellm \
     --config config.yaml \
-    --port 4000 \
+    --host "$SERVER_HOST" \
+    --port "$SERVER_PORT" \
     --keepalive_timeout 60
