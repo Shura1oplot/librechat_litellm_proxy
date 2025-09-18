@@ -41,7 +41,7 @@ class OpenAIResponsesBridge(CustomLLM):
     def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
             if message["role"] == "user":
-                match = re.search(r"<conv_id=(.*)>", str(message["content"]))
+                match = re.search(r"<conv_id=([^>]+)>", str(message["content"]))
 
                 if match:
                     return match.group(1)
