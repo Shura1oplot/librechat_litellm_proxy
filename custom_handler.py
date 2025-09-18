@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
-import asyncio
+import os
 import time
-from typing import Any, Callable, cast
 from collections.abc import Iterator, AsyncIterator
+from typing import Any, Callable, cast
 import re
+import asyncio
+
+from dotenv import load_dotenv
 
 import httpx
 
@@ -15,6 +18,9 @@ import litellm
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
+
+
+_ = load_dotenv()
 
 
 DEFAULT_OUTBOUND_MODEL = "gpt-5"
@@ -125,6 +131,34 @@ class OpenAIResponsesBridge(CustomLLM):
 
             raise ValueError(response)
 
+    @staticmethod
+    def _get_tools(
+        default_tools: list[dict[str, Any]] | None,
+        user_tools: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]]:
+        tools = (user_tools or [])[:]
+
+        for tool in (default_tools or []):
+            if tool["type"] == "mcp":
+                tool["server_url"] = tool["server_url"].format(**os.environ)
+
+                try:
+                    for k, v in tool["headers"].items():
+                        tool["headers"][k] = v.format(**os.environ)
+
+                except KeyError:
+                    pass
+
+                tools.append(tool)
+                continue
+
+            if tool["type"] in [x["type"] for x in tools]:
+                continue
+
+            tools.append(tool)
+
+        return tools
+
     def completion(
         self,
         model: str,
@@ -230,10 +264,12 @@ class OpenAIResponsesBridge(CustomLLM):
         if verbosity:
             responses_params["verbosity"] = verbosity
 
-        try:
-            responses_params["tools"] = optional_params["tools"]
-        except KeyError:
-            pass
+        tools = self._get_tools(
+            optional_params.get("default_tools", []),
+            optional_params.get("tools", []))
+
+        if tools:
+            responses_params["tools"] = tools
 
         try:
             responses_params["reasoning"] = {

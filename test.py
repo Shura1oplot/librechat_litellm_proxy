@@ -162,8 +162,8 @@ def test_perplexity_stream(model: str) -> None:
 
 if __name__ == "__main__":
     # test_chat_stream_direct()
-    # test_chat_stream_proxy()
+    test_chat_stream_proxy()
     # test_conversation()
-    test_deep_research()
+    # test_deep_research()
     # test_perplexity_stream("x-sonar-pro")
     # test_perplexity_stream("x-sonar-reasoning-pro-high")
