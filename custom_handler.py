@@ -8,7 +8,8 @@ import re
 
 import httpx
 
-from openai import AsyncOpenAI, Response
+from openai import AsyncOpenAI
+from openai.types.responses import Response
 
 import litellm
 from litellm.llms.custom_llm import CustomLLM
@@ -48,9 +49,7 @@ class OpenAIResponsesBridge(CustomLLM):
         return None
 
     @staticmethod
-    def _get_instructions_from_messages(
-        messages: list[dict[str, Any]]
-    ) -> str | None:
+    def _get_instructions_from_messages(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
             if message.get("role") == "system":
                 return str(message["content"])
@@ -215,7 +214,9 @@ class OpenAIResponsesBridge(CustomLLM):
         responses_params["conversation"] = conversation_id
 
         if new_conv_id:
-            responses_params["instructions"] = self._get_instructions_from_messages(messages)
+            responses_params["instructions"] = self._get_instructions_from_messages(
+                messages
+            )
 
             yield {
                 "finish_reason": "",
@@ -227,14 +228,16 @@ class OpenAIResponsesBridge(CustomLLM):
             }
 
         if background:
-            response_task = asyncio.create_task(self._background_responses(
-                outbound_aclient,
-                await outbound_aclient.responses.create(**responses_params)
-            ))
+            response_task = asyncio.create_task(
+                self._background_responses(
+                    outbound_aclient,
+                    await outbound_aclient.responses.create(**responses_params),
+                )
+            )
 
         else:
             response_task = asyncio.create_task(
-                self.async_openai_client.responses.create(**responses_params)
+                outbound_aclient.responses.create(**responses_params)
             )
 
         has_heartbeat = False
