@@ -95,7 +95,7 @@ class OpenAIResponsesBridge(CustomLLM):
     @staticmethod
     def _get_instructions_from_messages(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
-            if message.get("role") == "system":
+            if message["role"] in ("system", "developer"):
                 return str(message["content"])
 
         return DEFAULT_SYSTEM_PROMPT
@@ -248,6 +248,7 @@ class OpenAIResponsesBridge(CustomLLM):
         responses_params = {
             "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
             "input": self._get_input_from_messages(messages),
+            "instructions": self._get_instructions_from_messages(messages)
         }
 
         if background:
@@ -300,10 +301,6 @@ class OpenAIResponsesBridge(CustomLLM):
         responses_params["conversation"] = conversation_id
 
         if new_conv_id:
-            responses_params["instructions"] = self._get_instructions_from_messages(
-                messages
-            )
-
             yield {
                 "finish_reason": "",
                 "index": 0,

@@ -46,7 +46,7 @@ model_list:
           server_label: context7
           server_url: "https://mcp.context7.com/mcp"
           headers:
-            - CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
+            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
           require_approval: never
         - type: mcp
           server_label: deepwiki
@@ -75,7 +75,7 @@ model_list:
           server_label: context7
           server_url: "https://mcp.context7.com/mcp"
           headers:
-            - CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
+            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
           require_approval: never
         - type: mcp
           server_label: deepwiki
@@ -115,19 +115,19 @@ model_list:
       background: true
       response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги, переключать модель. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью, лучше бухайте."
 
-  - model_name: x-sonar-pro
+  - model_name: x-perplexity-pro
     litellm_params:
       model: perplexity-bridge/x-sonar-pro
       outbound_model: sonar-pro
 
-  - model_name: x-sonar-pro-high
+  - model_name: x-perplexity-pro-high
     litellm_params:
       model: perplexity-bridge/x-sonar-pro-high
       outbound_model: sonar-pro
       web_search_options:
         search_context_size: high
 
-  - model_name: x-sonar-reasoning-pro
+  - model_name: x-perplexity-reasoning-pro
     litellm_params:
       model: perplexity-bridge/x-sonar-reasoning-pro
       allowed_openai_params:
@@ -136,7 +136,7 @@ model_list:
       outbound_model: sonar-reasoning-pro
       cut_think: true
 
-  - model_name: x-sonar-reasoning-pro-high
+  - model_name: x-perplexity-reasoning-pro-high
     litellm_params:
       model: perplexity-bridge/x-sonar-reasoning-pro-high
       allowed_openai_params:
@@ -147,7 +147,7 @@ model_list:
         search_context_size: high
       cut_think: true
 
-  - model_name: x-sonar-deep-research
+  - model_name: x-perplexity-deep-research
     litellm_params:
       model: perplexity-bridge/x-sonar-deep-research
       allowed_openai_params:
@@ -156,7 +156,7 @@ model_list:
       reasoning_effort: high
       cut_think: true
 
-  - model_name: x-sonar-deep-research-high
+  - model_name: x-perplexity-deep-research-high
     litellm_params:
       model: perplexity-bridge/x-sonar-deep-research-high
       allowed_openai_params:
