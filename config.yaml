@@ -1,4 +1,7 @@
 model_list:
+  - model_name: x-router
+    litellm_params:
+      model: agent-router/x-router
   - model_name: x-gpt-5
     litellm_params:
       model: openai-bridge/x-gpt-5
@@ -189,6 +192,8 @@ litellm_settings:
       custom_handler: custom_handler.openai_responses_bridge
     - provider: perplexity-bridge
       custom_handler: custom_handler.perplexity_bridge
+    - provider: agent-router
+      custom_handler: custom_handler.agent_router
 
 
 general_settings:

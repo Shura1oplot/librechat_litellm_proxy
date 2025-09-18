@@ -1,7 +1,9 @@
 #!/bin/sh
 
+# shellcheck source=/dev/null
 . ./.venv/bin/activate
 
+# shellcheck source=/dev/null
 [ -f .env ] && set -a && . ./.env && set +a
 
 litellm \

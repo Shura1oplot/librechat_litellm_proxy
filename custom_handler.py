@@ -71,6 +71,28 @@ within scope.
 """
 
 
+ROUTABLE_MODELS = [
+    "x-gpt-5",
+    "x-gpt-5-thinking",
+    "x-gpt-5-thinking-high",
+    "x-o4-mini-deep-research",
+    "x-o3-deep-research",
+    "x-perplexity-pro",
+    "x-perplexity-pro-high",
+    "x-perplexity-reasoning-pro",
+    "x-perplexity-reasoning-pro-high",
+    "x-perplexity-deep-research",
+    "x-perplexity-deep-research-high",
+]
+
+ROUTABLE_CHOICES = ", ".join(ROUTABLE_MODELS)
+
+ROUTER_SYSTEM_PROMPT = (
+    "You are a routing agent. Choose the best model for the user message. "
+    "Valid options: " + ROUTABLE_CHOICES + ". Return only the model name."
+)
+
+
 class OpenAIResponsesBridge(CustomLLM):
 
     @staticmethod
@@ -134,11 +156,11 @@ class OpenAIResponsesBridge(CustomLLM):
     @staticmethod
     def _get_tools(
         default_tools: list[dict[str, Any]] | None,
-        user_tools: list[dict[str, Any]] | None
+        user_tools: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
         tools = (user_tools or [])[:]
 
-        for tool in (default_tools or []):
+        for tool in default_tools or []:
             if tool["type"] == "mcp":
                 tool["server_url"] = tool["server_url"].format(**os.environ)
 
@@ -222,7 +244,7 @@ class OpenAIResponsesBridge(CustomLLM):
     ) -> Iterator[GenericStreamingChunk]:
         raise NotImplementedError()
 
-    async def astreaming(
+    async def astreaming(  # pylint: disable=too-many-branches,too-many-statements
         self,
         model: str,
         messages: list[dict[str, Any]],
@@ -248,7 +270,7 @@ class OpenAIResponsesBridge(CustomLLM):
         responses_params = {
             "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
             "input": self._get_input_from_messages(messages),
-            "instructions": self._get_instructions_from_messages(messages)
+            "instructions": self._get_instructions_from_messages(messages),
         }
 
         if background:
@@ -266,8 +288,8 @@ class OpenAIResponsesBridge(CustomLLM):
             responses_params["verbosity"] = verbosity
 
         tools = self._get_tools(
-            optional_params.get("default_tools", []),
-            optional_params.get("tools", []))
+            optional_params.get("default_tools", []), optional_params.get("tools", [])
+        )
 
         if tools:
             responses_params["tools"] = tools
@@ -314,8 +336,7 @@ class OpenAIResponsesBridge(CustomLLM):
             response_task = asyncio.create_task(
                 self._background_responses(
                     outbound_aclient,
-                    (await outbound_aclient.responses.create(
-                        **responses_params)).id,
+                    (await outbound_aclient.responses.create(**responses_params)).id,
                 )
             )
 
@@ -383,7 +404,7 @@ class OpenAIResponsesBridge(CustomLLM):
             "is_finished": True,
             "text": "",
             "tool_use": None,
-            "usage": {  # TODO
+            "usage": {  # usage metrics placeholder
                 "completion_tokens": 0,
                 "prompt_tokens": 0,
                 "total_tokens": 0,
@@ -479,7 +500,7 @@ class PerplexityBridge(CustomLLM):
     ) -> Iterator[GenericStreamingChunk]:
         raise NotImplementedError()
 
-    async def astreaming(
+    async def astreaming(  # pylint: disable=too-many-branches
         self,
         model: str,
         messages: list[dict[str, Any]],
@@ -578,7 +599,7 @@ class PerplexityBridge(CustomLLM):
                     "is_finished": is_finished,
                     "text": content,
                     "tool_use": None,
-                    "usage": {  # TODO
+                    "usage": {  # usage metrics placeholder
                         "completion_tokens": 0,
                         "prompt_tokens": 0,
                         "total_tokens": 0,
@@ -586,5 +607,220 @@ class PerplexityBridge(CustomLLM):
                 }
 
 
+class AgentRouter(CustomLLM):
+
+    def _history_model(self, messages: list[dict[str, Any]]) -> str | None:
+        selected: str | None = None
+
+        for message in messages:
+            if message["role"] != "assistant":
+                continue
+
+            marker_text = str(message["content"])
+            marker_index = marker_text.find("<model=")
+
+            if marker_index == -1:
+                continue
+
+            end_index = marker_text.find(">", marker_index)
+
+            if end_index == -1:
+                continue
+
+            selected = marker_text[marker_index + 7 : end_index]
+
+        return selected
+
+    def _first_user_content(self, messages: list[dict[str, Any]]) -> str:
+        for message in messages:
+            if message["role"] == "user":
+                return str(message["content"])
+
+        return ""
+
+    async def _determine_model(self, messages: list[dict[str, Any]]) -> tuple[str, bool]:
+        existing = self._history_model(messages)
+
+        if existing in ROUTABLE_MODELS:
+            return existing, False
+
+        classify_response = await litellm.acompletion(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                {"role": "user", "content": self._first_user_content(messages)},
+            ],
+            temperature=0,
+        )
+
+        candidate_message = classify_response.choices[0].message.content
+
+        if candidate_message is None:
+            candidate_message = ""
+
+        candidate_message = candidate_message.strip()
+
+        for option in ROUTABLE_MODELS:
+            if option in candidate_message:
+                return option, True
+
+        return ROUTABLE_MODELS[0], True
+
+    def _call_params(
+        self,
+        selected_model: str,
+        messages: list[dict[str, Any]],
+        optional_params: dict[str, Any],
+        stream: bool,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "stream": stream,
+        }
+
+        for key in optional_params:
+            params[key] = optional_params[key]
+
+        params["stream"] = stream
+
+        return params
+
+    def _format_stream_chunk(
+        self,
+        chunk: Any,
+        should_prefix: bool,
+        selected_model: str,
+        prefixed: bool,
+    ) -> tuple[GenericStreamingChunk | None, bool]:
+        if not chunk.choices:
+            return None, prefixed
+
+        choice = chunk.choices[0]
+        delta = choice.delta
+        updated_prefixed = prefixed
+
+        if should_prefix and not prefixed:
+            if delta.content is None:
+                delta.content = f"<model={selected_model}>"
+            else:
+                delta.content = f"<model={selected_model}>" + delta.content
+
+            updated_prefixed = True
+
+        if delta.content is None:
+            delta.content = ""
+
+        text = delta.content
+        finish_reason = choice.finish_reason
+
+        if finish_reason is None:
+            finish_reason = ""
+
+        usage_value = None
+
+        if hasattr(chunk, "usage"):
+            usage_value = chunk.usage
+
+        formatted_chunk: GenericStreamingChunk = {
+            "finish_reason": finish_reason,
+            "index": choice.index,
+            "is_finished": bool(finish_reason),
+            "text": text,
+            "tool_use": None,
+            "usage": usage_value,
+        }
+
+        return formatted_chunk, updated_prefixed
+
+    async def acompletion(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        api_base: str,
+        custom_prompt_dict: dict[str, Any],
+        model_response: ModelResponse,
+        print_verbose: Callable[..., None],
+        encoding: Any,
+        api_key: str | None,
+        logging_obj: Any,
+        optional_params: dict[str, Any],
+        acompletion: Any = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: Callable[..., Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        client: HTTPHandler | None = None,
+    ) -> ModelResponse:
+        selected_model, should_prefix = await self._determine_model(messages)
+
+        call_params = self._call_params(
+            selected_model,
+            messages,
+            optional_params,
+            False,
+        )
+
+        response = cast(ModelResponse, await litellm.acompletion(**call_params))
+
+        if should_prefix:
+            response_message = response.choices[0].message
+
+            if response_message.content is None:
+                response_message.content = ""
+
+            response_message.content = (
+                f"<model={selected_model}>" + response_message.content
+            )
+
+        return response
+
+    async def astreaming(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        api_base: str,
+        custom_prompt_dict: dict[str, Any],
+        model_response: ModelResponse,
+        print_verbose: Callable[..., None],
+        encoding: Any,
+        api_key: str | None,
+        logging_obj: Any,
+        optional_params: dict[str, Any],
+        acompletion: Any = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: Callable[..., Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        client: AsyncHTTPHandler | None = None,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        selected_model, should_prefix = await self._determine_model(messages)
+
+        call_params = self._call_params(
+            selected_model,
+            messages,
+            optional_params,
+            True,
+        )
+
+        stream_response = await litellm.acompletion(**call_params)
+
+        prefixed = False
+
+        async for chunk in cast(AsyncIterator[Any], stream_response):
+            formatted_chunk, prefixed = self._format_stream_chunk(
+                chunk,
+                should_prefix,
+                selected_model,
+                prefixed,
+            )
+
+            if formatted_chunk is None:
+                continue
+
+            yield formatted_chunk
+
+
 openai_responses_bridge = OpenAIResponsesBridge()
 perplexity_bridge = PerplexityBridge()
+agent_router = AgentRouter()
