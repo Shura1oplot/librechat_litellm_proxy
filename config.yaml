@@ -10,7 +10,7 @@ model_list:
         - type: web_search
       outbound_model: gpt-5
       default_verbosity: low
-      response_prefix: ":test:"
+      response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью."
 
   - model_name: x-gpt-5-thinking
     litellm_params:
@@ -24,7 +24,7 @@ model_list:
         - type: web_search
       outbound_model: gpt-5
       default_verbosity: low
-      response_prefix: ":test:"
+      response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью."
   
   - model_name: x-gpt-5-thinking-high
     litellm_params:
@@ -39,7 +39,7 @@ model_list:
       outbound_model: gpt-5
       background: true
       default_verbosity: low
-      response_prefix: ":test:"
+      response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью."
 
   - model_name: gpt-5-mini
     litellm_params:
@@ -56,7 +56,7 @@ model_list:
         - type: web_search_preview
       outbound_model: o4-mini-deep-research
       background: true
-      response_prefix: ":test:"
+      response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью."
 
   - model_name: x-o3-deep-research
     litellm_params:
@@ -68,7 +68,7 @@ model_list:
         - type: web_search_preview
       outbound_model: o3-deep-research
       background: true
-      response_prefix: ":test:"
+      response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги. Минздрав предупреждает: курение вредит вашему здоровью."
 
   - model_name: x-sonar-pro
     litellm_params:
