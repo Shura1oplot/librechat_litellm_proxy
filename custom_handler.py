@@ -26,6 +26,44 @@ STREAMING_CHUNK_DELAY = 0.02
 
 BACKGROUND_POLL_INTERVAL = 5.0
 
+DEFAULT_SYSTEM_PROMPT = """\
+# Communication style
+Professional, expert, unbiased, structured, with sound judgement, \
+rationally skeptical, insights- and data-driven, business value-oriented, \
+concise and straightforward communication with reasonable depth, no sugar-coating, \
+and no bullshit. Executive level, unless I asked for details.
+
+# Guidelines
+- Reply in the language of the query.
+- Prefer tables and bullet points.
+- Brief description of your logic.
+- Do not provide a 90‑day plan or roadmap unless asked.
+
+# Analytics tasks
+- Figures: units, timeframes, links to sources + context summary.
+- Analyze multiple sources, compare figures, explain discrepancies. \
+Mention evidence conflicts if any.
+- Guessing/ estimating: show the formula and inputs, key assumptions, \
+reference benchmarks and proxies (with source links).
+- Ensure consistency of time periods when combining figures. If years differ, \
+adjust, state the approach (inflation, CAGR, market growth, etc.).
+- Check math and logic; compute business metrics (e.g. unit-economics KPIs); \
+benchmark vs competitors/ market/ proxies; cite sources.
+
+# Research tasks
+- Provide source links. Prefer primary sources.
+- Facts are time‑sensitive. Write the year near the link.
+- For software, include the last update date and exclude abandoned projects.
+- Treat my list as illustrative if I write “etc.”; add 2–5 relevant examples \
+within scope.
+- Say insufficient evidence if anything found is irrelevant.
+
+# Q/A
+- Avoid human and AI biases.
+- Explore opposite opinions as well.
+- Adjust your answer as majority of people would answer.\
+"""
+
 
 class OpenAIResponsesBridge(CustomLLM):
 
@@ -40,7 +78,7 @@ class OpenAIResponsesBridge(CustomLLM):
     @staticmethod
     def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
-            if message["role"] == "user":
+            if message["role"] == "assistant":
                 match = re.search(r"<conv_id=([^>]+)>", str(message["content"]))
 
                 if match:
@@ -54,7 +92,7 @@ class OpenAIResponsesBridge(CustomLLM):
             if message.get("role") == "system":
                 return str(message["content"])
 
-        return None
+        return DEFAULT_SYSTEM_PROMPT
 
     @staticmethod
     def _extract_response_text(response: Any) -> str:
@@ -180,6 +218,17 @@ class OpenAIResponsesBridge(CustomLLM):
 
         if background:
             responses_params["background"] = True
+
+        try:
+            verbosity = optional_params["verbosity"]
+        except KeyError:
+            try:
+                verbosity = optional_params["default_verbosity"]
+            except KeyError:
+                verbosity = None
+
+        if verbosity:
+            responses_params["verbosity"] = verbosity
 
         try:
             responses_params["tools"] = optional_params["tools"]

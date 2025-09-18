@@ -83,6 +83,49 @@ def test_chat_stream_proxy() -> None:
     print(f"\nProxy Duration: {proxy_duration:.2f}s")
 
 
+def test_conversation() -> None:
+    print("chat.completions conversation")
+
+    stream = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a chat bot.",
+            },
+            {"role": "user", "content": "Hi! I'm Alex."},
+        ],
+        stream=True,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+    )
+
+    assistant = ""
+
+    for chunk in stream:
+        assistant += chunk.choices[0].delta.content or ""
+        _ = sys.stdout.write(chunk.choices[0].delta.content or "")
+        _ = sys.stdout.flush()
+
+    stream = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a chat bot.",
+            },
+            {"role": "user", "content": "Hi! I'm Alex."},
+            {"role": "assistant", "content": assistant},
+            {"role": "user", "content": "What's my name?"},
+        ],
+        stream=True,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+    )
+
+    for chunk in stream:
+        _ = sys.stdout.write(chunk.choices[0].delta.content or "")
+        _ = sys.stdout.flush()
+
+
 def test_perplexity_stream(model: str) -> None:
     print("Perplexity streaming...")
 
@@ -102,6 +145,7 @@ def test_perplexity_stream(model: str) -> None:
 
 if __name__ == "__main__":
     # test_chat_stream_direct()
-    test_chat_stream_proxy()
+    # test_chat_stream_proxy()
+    test_conversation()
     # test_perplexity_stream("x-sonar-pro")
     # test_perplexity_stream("x-sonar-reasoning-pro-high")

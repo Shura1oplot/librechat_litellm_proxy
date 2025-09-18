@@ -5,9 +5,11 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
+        - verbosity
       tools:
         - type: web_search
       outbound_model: gpt-5
+      default_verbosity: low
       response_prefix: ":test:"
 
   - model_name: x-gpt-5-thinking
@@ -16,10 +18,12 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
+        - verbosity
       reasoning_effort: medium
       tools:
         - type: web_search
       outbound_model: gpt-5
+      default_verbosity: low
       response_prefix: ":test:"
   
   - model_name: x-gpt-5-thinking-high
@@ -28,11 +32,13 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
       allowed_openai_params:
         - reasoning_effort
+        - verbosity
       reasoning_effort: high
       tools:
         - type: web_search
       outbound_model: gpt-5
       background: true
+      default_verbosity: low
       response_prefix: ":test:"
 
   - model_name: gpt-5-mini
