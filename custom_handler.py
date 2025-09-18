@@ -71,26 +71,68 @@ within scope.
 """
 
 
-ROUTABLE_MODELS = [
-    "x-gpt-5",
-    "x-gpt-5-thinking",
-    "x-gpt-5-thinking-high",
-    "x-o4-mini-deep-research",
-    "x-o3-deep-research",
-    "x-perplexity-pro",
-    "x-perplexity-pro-high",
-    "x-perplexity-reasoning-pro",
-    "x-perplexity-reasoning-pro-high",
-    "x-perplexity-deep-research",
-    "x-perplexity-deep-research-high",
-]
+ROUTER_SYSTEM_PROMPT = """\
+# Role
+You are a LLM Router in LibreChat.
 
-ROUTABLE_CHOICES = ", ".join(ROUTABLE_MODELS)
+# Task
+Read the user’s request and recommend one the most suitable model from the list \
+of available models. Do not solve the task itself. Your audience: top-managers, \
+management consultants, financial analysts, and data analysts.
 
-ROUTER_SYSTEM_PROMPT = (
-    "You are a routing agent. Choose the best model for the user message. "
-    "Valid options: " + ROUTABLE_CHOICES + ". Return only the model name."
-)
+
+# Available models
+- gpt-5
+- gpt-5-reasoning-medium
+- gpt-5-reasoning-high
+- o3-deep-research
+- o4-mini-deep-research
+- claude-sonnet
+- claude-sonnet-thinking-high
+- claude-opus-thinking-high
+- perplexity-pro
+- perplexity-pro-high
+- perplexity-reasoning-pro-high
+- perplexity-deep-research-high
+
+Notes:
+- perplexity = sonar
+- "-high" on perplexity means "web_search_options": {"search_context_size": "high"}
+    - medium (w/o -high) -> default, best suited for general use cases
+    - high -> research, exploratory questions, or when citations and evidence coverage are critical
+
+
+# Typical domains
+- Management consulting
+- Finance
+- Analytics
+- Coding
+- Assumption‑challenge
+- Market/competitive research
+
+
+# Instruction
+
+Decide one best model and 1-2 alternative
+- heavy analysis/ reasoning with web search -> gpt-5-reasoning-high
+- multi-step reasoning -> gpt-5-reasoning-high or claude-opus-thinking-high
+- heavy research -> o3-deep-research, o4-mini-deep-research, sonar-deep-research
+- long documents processing -> claude-sonnet
+- coding -> claude-sonnet/opus-thinking-high, gpt-5-reasoning-medium
+- light search with fast result -> perplexity-pro
+- low latency or general questions -> gpt-5, claude-sonnet
+
+
+# Output format
+
+<think>
+...your understanding of the task and rationale of decision...
+</think>
+
+<model>
+gpt-5|...
+</model>\
+"""
 
 
 class OpenAIResponsesBridge(CustomLLM):
@@ -107,7 +149,7 @@ class OpenAIResponsesBridge(CustomLLM):
     def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
             if message["role"] == "assistant":
-                match = re.search(r"<conv_id=([^>]+)>", str(message["content"]))
+                match = re.search(r"<conv_id=(.*?)>", str(message["content"]))
 
                 if match:
                     return match.group(1)
@@ -520,7 +562,9 @@ class PerplexityBridge(CustomLLM):
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
         outbound_model = optional_params.pop("outbound_model")
+
         cut_think = optional_params.pop("cut_think", False)
+
         heartbeat_marker = optional_params.pop(
             "heartbeat_marker", DEFAULT_HEARTBEAT_MARKER
         )
@@ -609,131 +653,7 @@ class PerplexityBridge(CustomLLM):
 
 class AgentRouter(CustomLLM):
 
-    def _history_model(self, messages: list[dict[str, Any]]) -> str | None:
-        selected: str | None = None
-
-        for message in messages:
-            if message["role"] != "assistant":
-                continue
-
-            marker_text = str(message["content"])
-            marker_index = marker_text.find("<model=")
-
-            if marker_index == -1:
-                continue
-
-            end_index = marker_text.find(">", marker_index)
-
-            if end_index == -1:
-                continue
-
-            selected = marker_text[marker_index + 7 : end_index]
-
-        return selected
-
-    def _first_user_content(self, messages: list[dict[str, Any]]) -> str:
-        for message in messages:
-            if message["role"] == "user":
-                return str(message["content"])
-
-        return ""
-
-    async def _determine_model(self, messages: list[dict[str, Any]]) -> tuple[str, bool]:
-        existing = self._history_model(messages)
-
-        if existing in ROUTABLE_MODELS:
-            return existing, False
-
-        classify_response = await litellm.acompletion(
-            model="gpt-5-mini",
-            messages=[
-                {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-                {"role": "user", "content": self._first_user_content(messages)},
-            ],
-            temperature=0,
-        )
-
-        candidate_message = classify_response.choices[0].message.content
-
-        if candidate_message is None:
-            candidate_message = ""
-
-        candidate_message = candidate_message.strip()
-
-        for option in ROUTABLE_MODELS:
-            if option in candidate_message:
-                return option, True
-
-        return ROUTABLE_MODELS[0], True
-
-    def _call_params(
-        self,
-        selected_model: str,
-        messages: list[dict[str, Any]],
-        optional_params: dict[str, Any],
-        stream: bool,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "model": selected_model,
-            "messages": messages,
-            "stream": stream,
-        }
-
-        for key in optional_params:
-            params[key] = optional_params[key]
-
-        params["stream"] = stream
-
-        return params
-
-    def _format_stream_chunk(
-        self,
-        chunk: Any,
-        should_prefix: bool,
-        selected_model: str,
-        prefixed: bool,
-    ) -> tuple[GenericStreamingChunk | None, bool]:
-        if not chunk.choices:
-            return None, prefixed
-
-        choice = chunk.choices[0]
-        delta = choice.delta
-        updated_prefixed = prefixed
-
-        if should_prefix and not prefixed:
-            if delta.content is None:
-                delta.content = f"<model={selected_model}>"
-            else:
-                delta.content = f"<model={selected_model}>" + delta.content
-
-            updated_prefixed = True
-
-        if delta.content is None:
-            delta.content = ""
-
-        text = delta.content
-        finish_reason = choice.finish_reason
-
-        if finish_reason is None:
-            finish_reason = ""
-
-        usage_value = None
-
-        if hasattr(chunk, "usage"):
-            usage_value = chunk.usage
-
-        formatted_chunk: GenericStreamingChunk = {
-            "finish_reason": finish_reason,
-            "index": choice.index,
-            "is_finished": bool(finish_reason),
-            "text": text,
-            "tool_use": None,
-            "usage": usage_value,
-        }
-
-        return formatted_chunk, updated_prefixed
-
-    async def acompletion(
+    def completion(
         self,
         model: str,
         messages: list[dict[str, Any]],
@@ -752,28 +672,49 @@ class AgentRouter(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: HTTPHandler | None = None,
     ) -> ModelResponse:
-        selected_model, should_prefix = await self._determine_model(messages)
+        raise NotImplementedError()
 
-        call_params = self._call_params(
-            selected_model,
-            messages,
-            optional_params,
-            False,
-        )
+    async def acompletion(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        api_base: str,
+        custom_prompt_dict: dict[str, Any],
+        model_response: ModelResponse,
+        print_verbose: Callable[..., None],
+        encoding: Any,
+        api_key: str | None,
+        logging_obj: Any,
+        optional_params: dict[str, Any],
+        acompletion: Any = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: Callable[..., Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        client: AsyncHTTPHandler | None = None,
+    ) -> ModelResponse:
+        raise NotImplementedError()
 
-        response = cast(ModelResponse, await litellm.acompletion(**call_params))
-
-        if should_prefix:
-            response_message = response.choices[0].message
-
-            if response_message.content is None:
-                response_message.content = ""
-
-            response_message.content = (
-                f"<model={selected_model}>" + response_message.content
-            )
-
-        return response
+    def streaming(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        api_base: str,
+        custom_prompt_dict: dict[str, Any],
+        model_response: ModelResponse,
+        print_verbose: Callable[..., None],
+        encoding: Any,
+        api_key: str | None,
+        logging_obj: Any,
+        optional_params: dict[str, Any],
+        acompletion: Any = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: Callable[..., Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        client: HTTPHandler | None = None,
+    ) -> Iterator[GenericStreamingChunk]:
+        raise NotImplementedError()
 
     async def astreaming(
         self,
@@ -794,31 +735,70 @@ class AgentRouter(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
-        selected_model, should_prefix = await self._determine_model(messages)
+        has_model_msg = False
+        routed_to_model = None
 
-        call_params = self._call_params(
-            selected_model,
-            messages,
-            optional_params,
-            True,
-        )
-
-        stream_response = await litellm.acompletion(**call_params)
-
-        prefixed = False
-
-        async for chunk in cast(AsyncIterator[Any], stream_response):
-            formatted_chunk, prefixed = self._format_stream_chunk(
-                chunk,
-                should_prefix,
-                selected_model,
-                prefixed,
-            )
-
-            if formatted_chunk is None:
+        for message in messages:
+            if message["role"] != "assistant":
                 continue
 
-            yield formatted_chunk
+            match = re.search(r"<model=(.*?)>", str(message["content"]))
+
+            if match:
+                has_model_msg = True
+                routed_to_model = match.group(1)
+
+        if not routed_to_model:
+            user_message = None
+
+            for message in messages:
+                if message["role"] == "user":
+                    user_message = str(message["content"])
+
+            if not user_message:
+                raise ValueError(messages)
+
+            response = await litellm.acompletion(
+                model="gpt-5-mini",
+                messages=[
+                    {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0,
+            )
+
+            s = str(response.choices[0].message.content)
+
+            match = re.search(r"<model>(.*?)</model>", s, flags=re.DOTALL)
+
+            if not match:
+                raise ValueError(s)
+
+            routed_to_model = "x-" + match.group(1).strip()
+
+        if not has_model_msg:
+            yield {
+                "finish_reason": "",
+                "index": 0,
+                "is_finished": False,
+                "text": f"<model={routed_to_model}>\n",
+                "tool_use": None,
+                "usage": None,
+            }
+
+        params = {
+            "model": routed_to_model,
+            "messages": messages,
+            "stream": True,
+        }
+
+        for key in optional_params:
+            params[key] = optional_params[key]
+
+        stream_response = await litellm.acompletion(**params)
+
+        async for chunk in cast(AsyncIterator[Any], stream_response):
+            yield chunk
 
 
 openai_responses_bridge = OpenAIResponsesBridge()

@@ -1,7 +1,10 @@
 model_list:
-  - model_name: x-router
+  - model_name: x-auto
     litellm_params:
-      model: agent-router/x-router
+      model: agent-router/x-auto
+
+  # OpenAI
+
   - model_name: x-gpt-5
     litellm_params:
       model: openai-bridge/x-gpt-5
@@ -118,6 +121,8 @@ model_list:
       background: true
       response_prefix: "Тестовый режим. Нельзя: прикреплять документы и картинки, редактировать и удалять сообщения, перегенерировать ответ, дублировать диалоги, переключать модель. Место для рекламы сдается. Минздрав предупреждает: курение вредит вашему здоровью, лучше бухайте."
 
+  # Perplexity
+
   - model_name: x-perplexity-pro
     litellm_params:
       model: perplexity-bridge/x-sonar-pro
@@ -185,6 +190,67 @@ model_list:
       model: perplexity/sonar-reasoning-pro
       api_key: os.environ/PERPLEXITY_API_KEY
 
+  # Anthropic
+
+  - model_name: x-claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
+
+  - model_name: x-claude-sonnet-thinking-high
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      thinking:
+        type: enabled
+        budget_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
+
+  - model_name: x-claude-opus-thinking-high
+    litellm_params:
+      model: anthropic/claude-opus-4-1-20250805
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      thinking:
+        type: enabled
+        budget_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
 
 litellm_settings:
   custom_provider_map:
