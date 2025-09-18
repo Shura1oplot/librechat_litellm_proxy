@@ -45,7 +45,7 @@ def test_chat_stream_direct() -> None:
         stream=True,
     )
 
-    for event in stream:
+    for _ in stream:
         pass
 
     direct_duration = time.time() - start_time
