@@ -176,7 +176,6 @@ class OpenAIResponsesBridge(CustomLLM):
 
         responses_params = {
             "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
-            "instructions": self._get_instructions_from_messages(messages),
             "input": self._get_input_from_messages(messages),
         }
 
@@ -216,6 +215,8 @@ class OpenAIResponsesBridge(CustomLLM):
         responses_params["conversation"] = conversation_id
 
         if new_conv_id:
+            responses_params["instructions"] = self._get_instructions_from_messages(messages)
+
             yield {
                 "finish_reason": "",
                 "index": 0,
