@@ -209,7 +209,8 @@ class OpenAIResponsesBridge(CustomLLM):
         new_conv_id = conversation_id is None
 
         if not conversation_id:
-            conversation_id = await outbound_aclient.conversations.create()
+            conversation_obj = await outbound_aclient.conversations.create()
+            conversation_id = conversation_obj.id
 
         responses_params["conversation"] = conversation_id
 
