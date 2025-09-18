@@ -126,6 +126,23 @@ def test_conversation() -> None:
         _ = sys.stdout.flush()
 
 
+def test_deep_research() -> None:
+    print("openai deep research")
+
+    stream = client.chat.completions.create(
+        model="x-o3-deep-research",
+        messages=[
+            {"role": "user", "content": "Карточка компании Лукойл"},
+        ],
+        stream=True,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+    )
+
+    for chunk in stream:
+        _ = sys.stdout.write(chunk.choices[0].delta.content or "")
+        _ = sys.stdout.flush()
+
+
 def test_perplexity_stream(model: str) -> None:
     print("Perplexity streaming...")
 
@@ -146,6 +163,7 @@ def test_perplexity_stream(model: str) -> None:
 if __name__ == "__main__":
     # test_chat_stream_direct()
     # test_chat_stream_proxy()
-    test_conversation()
+    # test_conversation()
+    test_deep_research()
     # test_perplexity_stream("x-sonar-pro")
     # test_perplexity_stream("x-sonar-reasoning-pro-high")
