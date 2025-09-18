@@ -281,7 +281,8 @@ class OpenAIResponsesBridge(CustomLLM):
             response_task = asyncio.create_task(
                 self._background_responses(
                     outbound_aclient,
-                    await outbound_aclient.responses.create(**responses_params),
+                    (await outbound_aclient.responses.create(
+                        **responses_params)).id,
                 )
             )
 
