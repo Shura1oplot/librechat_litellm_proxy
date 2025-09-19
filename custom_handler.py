@@ -794,6 +794,7 @@ class AgentRouter(CustomLLM):
         for key in optional_params:
             params[key] = optional_params[key]
 
+        print(params)
         stream_response = await litellm.acompletion(**params)
 
         async for chunk in cast(AsyncIterator[Any], stream_response):

@@ -125,19 +125,19 @@ model_list:
 
   - model_name: x-perplexity-pro
     litellm_params:
-      model: perplexity-bridge/x-sonar-pro
+      model: perplexity-bridge/x-perplexity-pro
       outbound_model: sonar-pro
 
   - model_name: x-perplexity-pro-high
     litellm_params:
-      model: perplexity-bridge/x-sonar-pro-high
+      model: perplexity-bridge/x-perplexity-pro-high
       outbound_model: sonar-pro
       web_search_options:
         search_context_size: high
 
   - model_name: x-perplexity-reasoning-pro
     litellm_params:
-      model: perplexity-bridge/x-sonar-reasoning-pro
+      model: perplexity-bridge/x-perplexity-reasoning-pro
       allowed_openai_params:
         - reasoning_effort
       reasoning_effort: high
@@ -146,7 +146,7 @@ model_list:
 
   - model_name: x-perplexity-reasoning-pro-high
     litellm_params:
-      model: perplexity-bridge/x-sonar-reasoning-pro-high
+      model: perplexity-bridge/x-perplexity-reasoning-pro-high
       allowed_openai_params:
         - reasoning_effort
       outbound_model: sonar-reasoning-pro
@@ -157,7 +157,7 @@ model_list:
 
   - model_name: x-perplexity-deep-research
     litellm_params:
-      model: perplexity-bridge/x-sonar-deep-research
+      model: perplexity-bridge/x-perplexity-deep-research
       allowed_openai_params:
         - reasoning_effort
       outbound_model: sonar-deep-research
@@ -166,7 +166,7 @@ model_list:
 
   - model_name: x-perplexity-deep-research-high
     litellm_params:
-      model: perplexity-bridge/x-sonar-deep-research-high
+      model: perplexity-bridge/x-perplexity-deep-research-high
       allowed_openai_params:
         - reasoning_effort
       outbound_model: sonar-deep-research
