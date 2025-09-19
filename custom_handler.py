@@ -130,7 +130,7 @@ Decide one best model and 1-2 alternative
 </think>
 
 <model>
-gpt-5|...
+...exactly one model from the list of available models...
 </model>\
 """
 
@@ -764,7 +764,6 @@ class AgentRouter(CustomLLM):
                     {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=0,
             )
 
             s = str(response.choices[0].message.content)
