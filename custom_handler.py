@@ -76,51 +76,53 @@ ROUTER_SYSTEM_PROMPT = """\
 You are a LLM Router in LibreChat.
 
 # Task
-Read the user’s request and recommend one the most suitable model from the list \
+Read the user's request and recommend one the most suitable model from the list \
 of available models. Do not solve the task itself. Your audience: top-managers, \
 management consultants, financial analysts, and data analysts.
 
 
 # Available models
 - gpt-5
-- gpt-5-reasoning-medium
-- gpt-5-reasoning-high
-- o3-deep-research
+- gpt-5-thinking
+- gpt-5-thinking-high
 - o4-mini-deep-research
-- claude-sonnet
-- claude-sonnet-thinking-high
-- claude-opus-thinking-high
+- o3-deep-research
 - perplexity-pro
 - perplexity-pro-high
 - perplexity-reasoning-pro-high
 - perplexity-deep-research-high
+- claude-sonnet
+- claude-sonnet-thinking-high
+- claude-opus-thinking-high
 
 Notes:
 - perplexity = sonar
 - "-high" on perplexity means "web_search_options": {"search_context_size": "high"}
     - medium (w/o -high) -> default, best suited for general use cases
-    - high -> research, exploratory questions, or when citations and evidence coverage are critical
+    - -high -> research, exploratory questions, or when citations and evidence coverage are critical
 
 
 # Typical domains
 - Management consulting
 - Finance
 - Analytics
-- Coding
-- Assumption‑challenge
 - Market/competitive research
+- General web search tasks
+- Coding and technical analysis
+- Complex reasoning tasks
 
 
 # Instruction
 
-Decide one best model and 1-2 alternative
-- heavy analysis/ reasoning with web search -> gpt-5-reasoning-high
-- multi-step reasoning -> gpt-5-reasoning-high or claude-opus-thinking-high
-- heavy research -> o3-deep-research, o4-mini-deep-research, sonar-deep-research
-- long documents processing -> claude-sonnet
-- coding -> claude-sonnet/opus-thinking-high, gpt-5-reasoning-medium
-- light search with fast result -> perplexity-pro
-- low latency or general questions -> gpt-5, claude-sonnet
+Decide one best model:
+- general queries -> gpt-5
+- light web search, fast results -> perplexity-pro
+- comprehensive web search -> perplexity-pro-high
+- complex multi-step reasoning with web search -> gpt-5-thinking-high
+- complex multi-step reasoning with deep analysis and coding -> claude-opus-thinking-high
+- heavy long research with many sources -> perplexity-deep-research-high or o3-deep-research
+- coding and technical tasks -> claude-sonnet
+- large document processin -> claude-sonnet
 
 
 # Output format
@@ -446,11 +448,7 @@ class OpenAIResponsesBridge(CustomLLM):
             "is_finished": True,
             "text": "",
             "tool_use": None,
-            "usage": {  # usage metrics placeholder
-                "completion_tokens": 0,
-                "prompt_tokens": 0,
-                "total_tokens": 0,
-            },
+            "usage": None,
         }
 
 
@@ -643,11 +641,7 @@ class PerplexityBridge(CustomLLM):
                     "is_finished": is_finished,
                     "text": content,
                     "tool_use": None,
-                    "usage": {  # usage metrics placeholder
-                        "completion_tokens": 0,
-                        "prompt_tokens": 0,
-                        "total_tokens": 0,
-                    },
+                    "usage": None,
                 }
 
 
@@ -736,7 +730,6 @@ class AgentRouter(CustomLLM):
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
         has_model_msg = False
-        routed_to_model = None
 
         for message in messages:
             if message["role"] != "assistant":
@@ -767,7 +760,6 @@ class AgentRouter(CustomLLM):
             )
 
             s = str(response.choices[0].message.content)
-
             match = re.search(r"<model>(.*?)</model>", s, flags=re.DOTALL)
 
             if not match:
@@ -785,20 +777,45 @@ class AgentRouter(CustomLLM):
                 "usage": None,
             }
 
-        params = {
+        proxy_client = AsyncOpenAI(
+            base_url="http://localhost:4000/v1",
+            api_key="dummy-api-key",
+        )
+
+        request_params = {
             "model": routed_to_model,
             "messages": messages,
             "stream": True,
         }
 
-        for key in optional_params:
-            params[key] = optional_params[key]
+        if "max_tokens" in optional_params:
+            request_params["max_tokens"] = optional_params["max_tokens"]
 
-        print(params)
-        stream_response = await litellm.acompletion(**params)
+        if "temperature" in optional_params:
+            request_params["temperature"] = optional_params["temperature"]
 
-        async for chunk in cast(AsyncIterator[Any], stream_response):
-            yield chunk
+        if "search_context_size" in optional_params:
+            request_params["search_context_size"] = optional_params["search_context_size"]
+
+        stream_response = await proxy_client.chat.completions.create(**request_params)
+
+        async for chunk in stream_response:
+            if not chunk.choices or not chunk.choices[0].delta:
+                continue
+
+            choice = chunk.choices[0]
+            delta = choice.delta
+            content = getattr(delta, "content", "")
+            finish_reason = getattr(choice, "finish_reason", "")
+
+            yield {
+                "finish_reason": finish_reason,
+                "index": 0,
+                "is_finished": finish_reason is not None,
+                "text": content,
+                "tool_use": None,
+                "usage": getattr(chunk, "usage", None),
+            }
 
 
 openai_responses_bridge = OpenAIResponsesBridge()

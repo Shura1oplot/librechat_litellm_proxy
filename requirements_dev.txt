@@ -1,3 +1,4 @@
+uv
 openai
 pylint
 basedpyright

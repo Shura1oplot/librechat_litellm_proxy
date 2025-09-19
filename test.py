@@ -160,10 +160,32 @@ def test_perplexity_stream(model: str) -> None:
         _ = sys.stdout.flush()
 
 
+def test_agent_router() -> None:
+    print("x-auto")
+
+    stream = client.chat.completions.create(
+        model="x-auto",
+        messages=[
+            {"role": "user", "content": "What's the weather like today in San Francisco?"}
+        ],
+        stream=True,
+        max_tokens=2048,
+    )
+
+    content = ""
+    for chunk in stream:
+        delta_content = chunk.choices[0].delta.content or ""
+        content += delta_content
+        _ = sys.stdout.write(delta_content)
+        _ = sys.stdout.flush()
+
+
 if __name__ == "__main__":
+    # Original tests (commented out for now)
     # test_chat_stream_direct()
-    test_chat_stream_proxy()
+    # test_chat_stream_proxy()
     # test_conversation()
     # test_deep_research()
     # test_perplexity_stream("x-sonar-pro")
     # test_perplexity_stream("x-sonar-reasoning-pro-high")
+    test_agent_router()
