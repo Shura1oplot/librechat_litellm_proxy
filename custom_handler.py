@@ -730,6 +730,7 @@ class AgentRouter(CustomLLM):
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
         has_model_msg = False
+        routed_to_model = None
 
         for message in messages:
             if message["role"] != "assistant":
@@ -741,7 +742,7 @@ class AgentRouter(CustomLLM):
                 has_model_msg = True
                 routed_to_model = match.group(1)
 
-        if not routed_to_model:
+        if routed_to_model is None:
             user_message = None
 
             for message in messages:
@@ -778,7 +779,8 @@ class AgentRouter(CustomLLM):
             }
 
         proxy_client = AsyncOpenAI(
-            base_url="http://localhost:4000/v1",
+            base_url=(f'http://{os.environ["SERVER_HOST"]}:'
+                      f'{os.environ["SERVER_PORT"]}/v1'),
             api_key="dummy-api-key",
         )
 
