@@ -345,24 +345,24 @@ class OpenAIResponsesBridge(CustomLLM):
         except KeyError:
             pass
 
-        prefix = optional_params.get("response_prefix", "").strip()
-
-        if prefix:
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": prefix + "\n",
-                "tool_use": None,
-                "usage": None,
-            }
-
         conversation_id = self._get_conversation_id(messages)
         new_conv_id = conversation_id is None
 
         if not conversation_id:
             conversation_obj = await outbound_aclient.conversations.create()
             conversation_id = conversation_obj.id
+
+            prefix = optional_params.get("response_prefix", "").strip()
+
+            if prefix:
+                yield {
+                    "finish_reason": "",
+                    "index": 0,
+                    "is_finished": False,
+                    "text": prefix + "\n",
+                    "tool_use": None,
+                    "usage": None,
+                }
 
         responses_params["conversation"] = conversation_id
 
