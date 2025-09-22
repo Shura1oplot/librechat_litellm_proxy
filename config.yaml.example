@@ -1,0 +1,266 @@
+model_list:
+  - model_name: x-auto
+    litellm_params:
+      model: agent-router/x-auto
+
+  # OpenAI
+
+  - model_name: x-gpt-5
+    litellm_params:
+      model: openai-bridge/x-gpt-5
+      api_key: os.environ/OPENAI_API_KEY
+      allowed_openai_params:
+        - reasoning_effort
+        - verbosity
+        - tools
+      default_tools:
+        - type: web_search
+        - type: mcp
+          server_label: tavily
+          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: context7
+          server_url: "https://mcp.context7.com/mcp"
+          headers:
+            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: deepwiki
+          server_url: "https://mcp.deepwiki.com/sse"
+          require_approval: never
+      outbound_model: gpt-5
+      default_verbosity: low
+      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+
+  - model_name: x-gpt-5-thinking
+    litellm_params:
+      model: openai-bridge/x-gpt-5-thinking
+      api_key: os.environ/OPENAI_API_KEY
+      allowed_openai_params:
+        - reasoning_effort
+        - verbosity
+        - tools
+      reasoning_effort: medium
+      default_tools:
+        - type: web_search
+        - type: mcp
+          server_label: tavily
+          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: context7
+          server_url: "https://mcp.context7.com/mcp"
+          headers:
+            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: deepwiki
+          server_url: "https://mcp.deepwiki.com/sse"
+          require_approval: never
+      outbound_model: gpt-5
+      default_verbosity: low
+      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+  
+  - model_name: x-gpt-5-thinking-high
+    litellm_params:
+      model: openai-bridge/x-gpt-5-thinking-high
+      api_key: os.environ/OPENAI_API_KEY
+      allowed_openai_params:
+        - reasoning_effort
+        - verbosity
+        - tools
+      reasoning_effort: high
+      default_tools:
+        - type: web_search
+        - type: mcp
+          server_label: tavily
+          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: context7
+          server_url: "https://mcp.context7.com/mcp"
+          headers:
+            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
+          require_approval: never
+        - type: mcp
+          server_label: deepwiki
+          server_url: "https://mcp.deepwiki.com/sse"
+          require_approval: never
+      outbound_model: gpt-5
+      background: true
+      default_verbosity: low
+      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+
+  - model_name: gpt-5-mini
+    litellm_params:
+      model: openai/gpt-5-mini
+      api_key: os.environ/OPENAI_API_KEY
+  
+  - model_name: x-o4-mini-deep-research
+    litellm_params:
+      model: openai-bridge/x-o4-mini-deep-research
+      api_key: os.environ/OPENAI_API_KEY
+      allowed_openai_params:
+        - reasoning_effort
+      default_tools:
+        - type: web_search_preview
+      outbound_model: o4-mini-deep-research
+      background: true
+      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+
+  - model_name: x-o3-deep-research
+    litellm_params:
+      model: openai-bridge/x-o3-deep-research
+      api_key: os.environ/OPENAI_API_KEY
+      allowed_openai_params:
+        - reasoning_effort
+      default_tools:
+        - type: web_search_preview
+      outbound_model: o3-deep-research
+      background: true
+      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+
+  # Perplexity
+
+  - model_name: x-perplexity-pro
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-pro
+      outbound_model: sonar-pro
+
+  - model_name: x-perplexity-pro-high
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-pro-high
+      outbound_model: sonar-pro
+      web_search_options:
+        search_context_size: high
+
+  - model_name: x-perplexity-reasoning-pro
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-reasoning-pro
+      allowed_openai_params:
+        - reasoning_effort
+      reasoning_effort: high
+      outbound_model: sonar-reasoning-pro
+      cut_think: true
+
+  - model_name: x-perplexity-reasoning-pro-high
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-reasoning-pro-high
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-reasoning-pro
+      reasoning_effort: high
+      web_search_options:
+        search_context_size: high
+      cut_think: true
+
+  - model_name: x-perplexity-deep-research
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-deep-research
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-deep-research
+      reasoning_effort: high
+      cut_think: true
+
+  - model_name: x-perplexity-deep-research-high
+    litellm_params:
+      model: perplexity-bridge/x-perplexity-deep-research-high
+      allowed_openai_params:
+        - reasoning_effort
+      outbound_model: sonar-deep-research
+      reasoning_effort: high
+      web_search_options:
+        search_context_size: high
+      cut_think: true
+
+  - model_name: sonar-deep-research
+    litellm_params:
+      model: perplexity/sonar-deep-research
+      api_key: os.environ/PERPLEXITY_API_KEY
+
+  - model_name: sonar-pro
+    litellm_params:
+      model: perplexity/sonar-pro
+      api_key: os.environ/PERPLEXITY_API_KEY
+
+  - model_name: sonar-reasoning-pro
+    litellm_params:
+      model: perplexity/sonar-reasoning-pro
+      api_key: os.environ/PERPLEXITY_API_KEY
+
+  # Anthropic
+
+  - model_name: x-claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
+
+  - model_name: x-claude-sonnet-thinking-high
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      thinking:
+        type: enabled
+        budget_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
+
+  - model_name: x-claude-opus-thinking-high
+    litellm_params:
+      model: anthropic/claude-opus-4-1-20250805
+      api_key: os.environ/ANTHROPIC_API_KEY
+      headers:
+        anthropic-version: "2023-06-01"
+        anthropic-beta: "web-fetch-2025-09-10,code-execution-2025-08-25"
+      max_tokens: 32000
+      thinking:
+        type: enabled
+        budget_tokens: 32000
+      tools:
+        - type: web_search_20250305
+          name: web_search
+          max_uses: 5
+        - type: web_fetch_20250910
+          name: web_fetch
+          max_uses: 5
+        - type: code_execution_20250825
+          name: code_execution
+
+litellm_settings:
+  custom_provider_map:
+    - provider: openai-bridge
+      custom_handler: custom_handler.openai_responses_bridge
+    - provider: perplexity-bridge
+      custom_handler: custom_handler.perplexity_bridge
+    - provider: agent-router
+      custom_handler: custom_handler.agent_router
+
+
+general_settings:
+  enable_preview_features: true

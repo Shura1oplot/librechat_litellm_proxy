@@ -1,0 +1,7 @@
+uv
+openai
+pylint
+basedpyright
+ruff
+black
+mccabe
