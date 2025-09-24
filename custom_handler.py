@@ -18,7 +18,7 @@ from openai.types.responses import Response
 
 import litellm
 from litellm.llms.custom_llm import CustomLLM
-from litellm.types.utils import GenericStreamingChunk, ModelResponse
+from litellm.types.utils import GenericStreamingChunk, ChatCompletionUsageBlock, ModelResponse
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 
 
@@ -266,10 +266,10 @@ class OpenAIResponsesBridge(CustomLLM):
 
         return out_tools
 
-    @staticmethod
+    @classmethod
     def _extract_from_responses(
-        resp: Any
-    ) -> tuple[list[dict[str, Any]], str, dict[str, Any], str]:
+        cls, resp: Any
+    ) -> tuple[list[dict[str, Any]], str, ChatCompletionUsageBlock, str]:
         output = _g(resp, "output") or []
         tool_calls: list[dict[str, Any]] = []
         texts: list[str] = []
@@ -308,7 +308,7 @@ class OpenAIResponsesBridge(CustomLLM):
                 texts = [ot]
 
         text = "".join(texts)
-        usage = _g(resp, "usage") or {}
+        usage = cls._normalize_usage(_g(resp, "usage"))
 
         if tool_calls:
             return tool_calls, "", usage, "tool_calls"
@@ -338,7 +338,7 @@ class OpenAIResponsesBridge(CustomLLM):
                 "is_finished": True,
                 "text": "",
                 "tool_use": None,
-                "usage": usage or None,
+                "usage": usage,
             }
 
             return
@@ -362,7 +362,39 @@ class OpenAIResponsesBridge(CustomLLM):
             "is_finished": True,
             "text": "",
             "tool_use": None,
-            "usage": usage or None,
+            "usage": usage,
+        }
+
+    @staticmethod
+    def _obj_to_dict(o: Any) -> dict[str, Any] | None:
+        if o is None:
+            return None
+
+        if isinstance(o, dict):
+            return o
+
+        if hasattr(o, "model_dump"):
+            return o.model_dump()
+
+        if hasattr(o, "dict"):
+            return o.dict()
+
+        if hasattr(o, "__dict__"):
+            return vars(o)
+
+        return None
+
+    @classmethod
+    def _normalize_usage(cls, uobj) -> ChatCompletionUsageBlock:
+        u = cls._obj_to_dict(uobj) or {}
+        prompt = u.get("input_tokens") or u.get("prompt_tokens") or 0
+        completion = u.get("output_tokens") or u.get("completion_tokens") or 0
+        total = u.get("total_tokens") or (prompt or 0) + (completion or 0)
+
+        return {
+            "prompt_tokens": int(prompt or 0),
+            "completion_tokens": int(completion or 0),
+            "total_tokens": int(total or 0),
         }
 
     def completion(
