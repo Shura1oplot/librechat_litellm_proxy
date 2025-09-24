@@ -145,6 +145,9 @@ def _g(o: Any, k: Any, d: Any | None = None) -> Any:
 
 class OpenAIResponsesBridge(CustomLLM):
 
+    # FIXME: clear cache
+    _shared_call_id_to_conversation_id = {}
+
     @classmethod
     def _get_input_from_messages(
         cls, messages: list[dict[str, Any]]
@@ -154,14 +157,9 @@ class OpenAIResponsesBridge(CustomLLM):
                 return str(message["content"])
 
             if message["role"] == "tool":
-                call_id = message.get("tool_call_id") or message.get("id")
-
-                if not call_id:
-                    raise ValueError(message)
-
                 return [{
                     "type": "function_call_output",
-                    "call_id": call_id,
+                    "call_id": message["tool_call_id"],
                     "output": cls._content_to_text(message.get("content"))
                 }]
 
@@ -180,8 +178,10 @@ class OpenAIResponsesBridge(CustomLLM):
 
         return str(c)
 
-    @staticmethod
-    def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
+    @classmethod
+    def _get_conversation_id(
+        cls, messages: list[dict[str, Any]]
+    ) -> str | None:
         for message in messages:
             if message["role"] == "assistant":
                 match = re.search(r"<conv_id=(.*?)>", str(message["content"]))
@@ -189,10 +189,28 @@ class OpenAIResponsesBridge(CustomLLM):
                 if match:
                     return match.group(1)
 
+                break
+
+        for message in reversed(messages):
+            if message["role"] == "tool":
+                call_id = message["tool_call_id"]
+
+                if not call_id:
+                    raise ValueError(message)
+
+                conv_id = cls._shared_call_id_to_conversation_id.get(call_id)
+
+                if conv_id:
+                    return conv_id
+
+                break
+
         return None
 
     @staticmethod
-    def _get_instructions_from_messages(messages: list[dict[str, Any]]) -> str | None:
+    def _get_instructions_from_messages(
+        messages: list[dict[str, Any]]
+    ) -> str | None:
         for message in messages:
             if message["role"] in ("system", "developer"):
                 return str(message["content"])
@@ -304,15 +322,13 @@ class OpenAIResponsesBridge(CustomLLM):
         for item in output:
             itype = _g(item, "type")
 
-            # function/tool call items
-            if itype in ("function_call", "tool_call", "tool_use"):
+            if itype == "function_call":
                 name = _g(item, "name")
 
                 if not name:
-                    # FIXME: warning
-                    continue
+                    raise ValueError(item)
 
-                call_id = _g(item, "call_id") or _g(item, "id") or f"call_{len(tool_calls)+1}"
+                call_id = _g(item, "call_id")
                 args = _g(item, "arguments")
                 args_str = json.dumps(args, ensure_ascii=False, separators=(",", ":")) if isinstance(args, (dict, list)) else (args or "{}")
                 tool_calls.append({"id": call_id, "type": "function", "function": {"name": name, "arguments": args_str}})
@@ -328,19 +344,19 @@ class OpenAIResponsesBridge(CustomLLM):
                     if isinstance(c, dict) and c.get("type") == "text":
                         texts.append(c.get("text") or "")
 
-        # fallback to output_text
-        if not texts:
-            ot = _g(resp, "output_text")
-            if isinstance(ot, str):
-                texts = [ot]
-
-        text = "".join(texts)
         usage = cls._normalize_usage(_g(resp, "usage"))
 
         if tool_calls:
             return tool_calls, "", usage, "tool_calls"
 
-        return [], text, usage, "stop"
+        # fallback to output_text
+        if not texts:
+            ot = _g(resp, "output_text")
+
+            if isinstance(ot, str):
+                texts = [ot]
+
+        return [], "".join(texts), usage, "stop"
 
     async def _stream_chat_from_responses(
         self, resp: Any, chunk_size: int = STREAMING_CHUNK_SIZE
@@ -632,6 +648,11 @@ class OpenAIResponsesBridge(CustomLLM):
             }
 
         response_obj = await response_task
+
+        for item in _g(response_obj, "output") or []:
+            if _g(item, "type") == "function_call":
+                call_id = _g(item, "call_id")
+                self._shared_call_id_to_conversation_id[call_id] = conversation_id
 
         async for ev in self._stream_chat_from_responses(response_obj):
             yield ev
