@@ -155,6 +155,8 @@ class OpenAIResponsesBridge(CustomLLM):
 
     @staticmethod
     def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
+        print(messages)
+
         for message in messages:
             if message["role"] == "assistant":
                 match = re.search(r"<conv_id=(.*?)>", str(message["content"]))
