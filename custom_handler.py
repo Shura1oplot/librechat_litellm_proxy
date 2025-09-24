@@ -522,7 +522,7 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
-        print("Input:")
+        print("Inbound chat:")
         print(messages)
 
         outbound_aclient = AsyncOpenAI(api_key=api_key)
@@ -594,7 +594,7 @@ class OpenAIResponsesBridge(CustomLLM):
                 "usage": None,
             }
 
-        print("Input resp:")
+        print("Outbound resp:")
         print(responses_params)
 
         if background:
@@ -648,6 +648,9 @@ class OpenAIResponsesBridge(CustomLLM):
             }
 
         response_obj = await response_task
+
+        print("Response")
+        print(response_obj)
 
         for item in _g(response_obj, "output") or []:
             if _g(item, "type") == "function_call":
