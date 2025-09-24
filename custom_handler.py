@@ -2,25 +2,27 @@
 
 import os
 import time
-from collections.abc import Iterator, AsyncIterator, AsyncGenerator
-from typing import Any, Callable, cast
-from copy import deepcopy
+from collections.abc import Iterator, AsyncIterator
+from typing import Any, Callable
 import json
 import re
 import asyncio
 
 from dotenv import load_dotenv
 
+import litellm
+from litellm.llms.custom_llm import CustomLLM
+from litellm.types.utils import (GenericStreamingChunk,
+                                 ChatCompletionToolCallChunk,
+                                 ModelResponse)
+from litellm.llms.custom_httpx.http_handler import (AsyncHTTPHandler,
+                                                    HTTPHandler)
+from litellm.caching.caching import Cache
+
 import httpx
 
 from openai import AsyncOpenAI
 from openai.types.responses import Response
-
-import litellm
-from litellm.llms.custom_llm import CustomLLM
-from litellm.types.utils import GenericStreamingChunk, ChatCompletionUsageBlock, ModelResponse
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
-from litellm.caching.caching import Cache
 
 
 _ = load_dotenv()
@@ -140,100 +142,13 @@ Decide one best model:
 """
 
 
-def _g(o: Any, k: Any, d: Any | None = None) -> Any:
-    return o.get(k, d) if isinstance(o, dict) else getattr(o, k, d)
-
-
 class OpenAIResponsesBridge(CustomLLM):
 
-    _call_id_to_conversation_id = Cache()
-
-    @classmethod
-    def _get_input_from_messages(
-        cls, messages: list[dict[str, Any]]
-    ) -> str | list[dict[str, Any]]:
-        for message in reversed(messages):
-            if message["role"] == "user":
-                return str(message["content"])
-
-            if message["role"] == "tool":
-                return [{
-                    "type": "function_call_output",
-                    "call_id": message["tool_call_id"],
-                    "output": cls._content_to_text(message.get("content"))
-                }]
-
-        raise ValueError(messages)
+    _cache = Cache()
 
     @staticmethod
-    def _content_to_text(c: Any) -> str:
-        if isinstance(c, str):
-            return c
-
-        if isinstance(c, list):
-            return "".join(p.get("text","") for p in c if isinstance(p, dict) and p.get("type") in ("text","input_text","output_text"))
-
-        if isinstance(c, dict) and "text" in c:
-            return str(c["text"])
-
-        return str(c)
-
-    @classmethod
-    def _get_conversation_id(
-        cls, messages: list[dict[str, Any]]
-    ) -> str | None:
-        for message in messages:
-            if message["role"] == "assistant":
-                match = re.search(r"<conv_id=(.*?)>", str(message["content"]))
-
-                if match:
-                    return match.group(1)
-
-                break
-
-        for message in reversed(messages):
-            if message["role"] == "tool":
-                call_id = message["tool_call_id"]
-
-                if not call_id:
-                    raise ValueError(message)
-
-                conv_id = cast(str | None, cls._call_id_to_conversation_id.get_cache(
-                    cache_key=call_id))
-
-                if conv_id:
-                    return conv_id
-
-                break
-
-        return None
-
-    @staticmethod
-    def _get_instructions_from_messages(
-        messages: list[dict[str, Any]]
-    ) -> str | None:
-        for message in messages:
-            if message["role"] in ("system", "developer"):
-                return str(message["content"])
-
-        return DEFAULT_SYSTEM_PROMPT
-
-    @staticmethod
-    def _extract_response_text(response: Any) -> str:
-        if hasattr(response, "output") and response.output:
-            for output_item in response.output:
-                if hasattr(output_item, "content") and output_item.content:
-                    for content_item in output_item.content:
-                        if hasattr(content_item, "text") and content_item.text:
-                            return str(content_item.text)
-
-        elif hasattr(response, "output_text"):
-            return response.output_text
-
-        return str(response)
-
-    @staticmethod
-    async def _background_responses(aclient: AsyncOpenAI, _id: str) -> Response:
+    async def _background_responses(aclient: AsyncOpenAI,
+                                    _id: str) -> Response:
         while True:
             response = await aclient.responses.retrieve(_id)
 
@@ -249,292 +164,126 @@ class OpenAIResponsesBridge(CustomLLM):
 
             raise ValueError(response)
 
-    @classmethod
-    def _get_tools(
-        cls,
-        default_tools: list[dict[str, Any]] | None,
-        user_tools: list[dict[str, Any]] | None,
-    ) -> list[dict[str, Any]]:
-        tools = (cls._chat_completion_tools_to_responses(user_tools) or [])[:]
-
-        for tool in default_tools or []:
-            if tool["type"] == "mcp":
-                tool["server_url"] = tool["server_url"].format(**os.environ)
-
-                try:
-                    for k, v in tool["headers"].items():
-                        tool["headers"][k] = v.format(**os.environ)
-
-                except KeyError:
-                    pass
-
-                tools.append(tool)
-                continue
-
-            if tool["type"] in [x["type"] for x in tools]:
-                continue
-
-            tools.append(tool)
-
-        return tools
-
-    @staticmethod
-    def _chat_completion_tools_to_responses(
-        tools: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]] | None:
-        """
-        Chat Completions:
-          {"type":"function","function":{"name","description"?, "parameters"?}}
-        → Responses / GPT‑5 bridges (FunctionTool):
-          {"type":"function","name","description"?, "parameters":{...}}
-        """
-        if not tools:
-            return tools
-
-        out_tools = []
-
-        for t in tools or []:
-            if isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict):
-                f = t["function"]
-                name = f["name"]
-
-                params = f.get("parameters") if isinstance(f.get("parameters"), dict) else {"type":"object","properties":{}}
-
-                out_tools.append({
-                    "type": "function",
-                    "name": name,
-                    "description": f.get("description",""),
-                    "parameters": deepcopy(params)
-                })
-
-            else:
-                out_tools.append(deepcopy(t))
-
-        return out_tools
-
-    @classmethod
-    def _extract_from_responses(
-        cls, resp: Any
-    ) -> tuple[list[dict[str, Any]], str, ChatCompletionUsageBlock, str]:
-        output = _g(resp, "output") or []
-        tool_calls: list[dict[str, Any]] = []
-        texts: list[str] = []
-
-        for item in output:
-            itype = _g(item, "type")
-
-            if itype == "function_call":
-                name = _g(item, "name")
-
-                if not name:
-                    raise ValueError(item)
-
-                call_id = _g(item, "call_id")
-                args = _g(item, "arguments")
-                args_str = json.dumps(args, ensure_ascii=False, separators=(",", ":")) if isinstance(args, (dict, list)) else (args or "{}")
-                tool_calls.append({"id": call_id, "type": "function", "function": {"name": name, "arguments": args_str}})
-
-            # collect any text fragments
-            ci = _g(item, "content")
-
-            if isinstance(ci, str):
-                texts.append(ci)
-
-            elif isinstance(ci, list):
-                for c in ci:
-                    if isinstance(c, dict) and c.get("type") == "text":
-                        texts.append(c.get("text") or "")
-
-        usage = cls._normalize_usage(_g(resp, "usage"))
-
-        if tool_calls:
-            return tool_calls, "", usage, "tool_calls"
-
-        # fallback to output_text
-        if not texts:
-            ot = _g(resp, "output_text")
-
-            if isinstance(ot, str):
-                texts = [ot]
-
-        return [], "".join(texts), usage, "stop"
-
-    async def _stream_chat_from_responses(
-        self, resp: Any, chunk_size: int = STREAMING_CHUNK_SIZE
-    ) -> AsyncGenerator[GenericStreamingChunk, None]:
-        tool_calls, text, usage, finish_reason = self._extract_from_responses(resp)
-
-        # If the model issued tool calls, emit them first and finish.
-        if tool_calls:
-            for tc in tool_calls:
-                yield {
-                    "finish_reason": "",
-                    "index": 0,
-                    "is_finished": False,
-                    "text": "",
-                    "tool_use": tc,   # <-- Chat Completions-style tool call
-                    "usage": None,
-                }
-
-            yield {
-                "finish_reason": finish_reason,  # "tool_calls"
-                "index": 0,
-                "is_finished": True,
-                "text": "",
-                "tool_use": None,
-                "usage": usage,
-            }
-
-            return
-
-        # Otherwise stream text chunks.
-        if text:
-            for i in range(0, len(text), chunk_size):
-                yield {
-                    "finish_reason": "",
-                    "index": 0,
-                    "is_finished": False,
-                    "text": text[i:i+chunk_size],
-                    "tool_use": None,
-                    "usage": None,
-                }
-
-        # Final frame with usage.
-        yield {
-            "finish_reason": finish_reason,  # "stop" when only text
-            "index": 0,
-            "is_finished": True,
-            "text": "",
-            "tool_use": None,
-            "usage": usage,
-        }
-
-    @staticmethod
-    def _obj_to_dict(o: Any) -> dict[str, Any] | None:
-        if o is None:
-            return None
-
-        if isinstance(o, dict):
-            return o
-
-        if hasattr(o, "model_dump"):
-            return o.model_dump()
-
-        if hasattr(o, "dict"):
-            return o.dict()
-
-        if hasattr(o, "__dict__"):
-            return vars(o)
-
-        return None
-
-    @classmethod
-    def _normalize_usage(cls, uobj) -> ChatCompletionUsageBlock:
-        u = cls._obj_to_dict(uobj) or {}
-        prompt = u.get("input_tokens") or u.get("prompt_tokens") or 0
-        completion = u.get("output_tokens") or u.get("completion_tokens") or 0
-        total = u.get("total_tokens") or (prompt or 0) + (completion or 0)
-
-        return {
-            "prompt_tokens": int(prompt or 0),
-            "completion_tokens": int(completion or 0),
-            "total_tokens": int(total or 0),
-        }
-
-    def completion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> ModelResponse:
+    def completion(self,
+                   model: str,
+                   messages: list[dict[str, Any]],
+                   api_base: str,
+                   custom_prompt_dict: dict[str, Any],
+                   model_response: ModelResponse,
+                   print_verbose: Callable[..., None],
+                   encoding: Any,
+                   api_key: str | None,
+                   logging_obj: Any,
+                   optional_params: dict[str, Any],
+                   acompletion: Any = None,
+                   litellm_params: dict[str, Any] | None = None,
+                   logger_fn: Callable[..., Any] | None = None,
+                   headers: dict[str, Any] | None = None,
+                   timeout: float | httpx.Timeout | None = None,
+                   client: HTTPHandler | None = None) \
+                   -> ModelResponse:
         raise NotImplementedError()
 
-    async def acompletion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> ModelResponse:
+    async def acompletion(self,
+                          model: str,
+                          messages: list[dict[str, Any]],
+                          api_base: str,
+                          custom_prompt_dict: dict[str, Any],
+                          model_response: ModelResponse,
+                          print_verbose: Callable[..., None],
+                          encoding: Any,
+                          api_key: str | None,
+                          logging_obj: Any,
+                          optional_params: dict[str, Any],
+                          acompletion: Any = None,
+                          litellm_params: dict[str, Any] | None = None,
+                          logger_fn: Callable[..., Any] | None = None,
+                          headers: dict[str, Any] | None = None,
+                          timeout: float | httpx.Timeout | None = None,
+                          client: AsyncHTTPHandler | None = None) \
+                          -> ModelResponse:
         raise NotImplementedError()
 
-    def streaming(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> Iterator[GenericStreamingChunk]:
+    def streaming(self,
+                  model: str,
+                  messages: list[dict[str, Any]],
+                  api_base: str,
+                  custom_prompt_dict: dict[str, Any],
+                  model_response: ModelResponse,
+                  print_verbose: Callable[..., None],
+                  encoding: Any,
+                  api_key: str | None,
+                  logging_obj: Any,
+                  optional_params: dict[str, Any],
+                  acompletion: Any = None,
+                  litellm_params: dict[str, Any] | None = None,
+                  logger_fn: Callable[..., Any] | None = None,
+                  headers: dict[str, Any] | None = None,
+                  timeout: float | httpx.Timeout | None = None,
+                  client: HTTPHandler | None = None) \
+                  -> Iterator[GenericStreamingChunk]:
         raise NotImplementedError()
 
-    async def astreaming(  # pylint: disable=too-many-branches,too-many-statements
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> AsyncIterator[GenericStreamingChunk]:
-        print("Inbound chat:")
-        print(messages)
+    async def astreaming(self,
+                         model: str,
+                         messages: list[dict[str, Any]],
+                         api_base: str,
+                         custom_prompt_dict: dict[str, Any],
+                         model_response: ModelResponse,
+                         print_verbose: Callable[..., None],
+                         encoding: Any,
+                         api_key: str | None,
+                         logging_obj: Any,
+                         optional_params: dict[str, Any],
+                         acompletion: Any = None,
+                         litellm_params: dict[str, Any] | None = None,
+                         logger_fn: Callable[..., Any] | None = None,
+                         headers: dict[str, Any] | None = None,
+                         timeout: float | httpx.Timeout | None = None,
+                         client: AsyncHTTPHandler | None = None) \
+                         -> AsyncIterator[GenericStreamingChunk]:
+        input_: Any = None
 
-        outbound_aclient = AsyncOpenAI(api_key=api_key)
+        for message in reversed(messages):
+            if message["role"] == "user":
+                input_ = str(message["content"])
+                break
 
-        background = optional_params.get("background", False)
+            if message["role"] == "tool":
+                t = message.get("content", "")
+
+                if isinstance(t, list):
+                    t = "".join(x.get("text","") for x in t
+                                if isinstance(x, dict) and x.get("type") \
+                                in ("text", "input_text", "output_text"))
+
+                elif isinstance(t, dict) and "text" in t:
+                    t = t["text"]
+
+                else:
+                    t = str(t)
+
+                input_ = [{"type": "function_call_output",
+                           "call_id": message["tool_call_id"],
+                           "output": t}]
+
+        if not input_:
+            raise ValueError(messages)
+
+        instructions = DEFAULT_SYSTEM_PROMPT
+
+        for message in messages:
+            if message["role"] in ("system", "developer"):
+                instructions = str(message["content"])
+                break
 
         responses_params = {
             "model": optional_params.get("outbound_model", DEFAULT_OUTBOUND_MODEL),
-            "input": self._get_input_from_messages(messages),
-            "instructions": self._get_instructions_from_messages(messages),
+            "input": input_,
+            "instructions": instructions,
         }
+
+        background = optional_params.get("background", False)
 
         if background:
             responses_params["background"] = True
@@ -550,246 +299,308 @@ class OpenAIResponsesBridge(CustomLLM):
         if verbosity:
             responses_params["verbosity"] = verbosity
 
-        tools = self._get_tools(
-            optional_params.get("default_tools", []), optional_params.get("tools", [])
-        )
+        tools = []
+
+        for tool in optional_params.get("tools") or []:
+            if isinstance(tool, dict) and tool.get("type") == "function" \
+                    and isinstance(tool.get("function"), dict):
+                func = tool["function"]
+                name = func["name"]
+
+                params = func.get("parameters") \
+                    if isinstance(func.get("parameters"), dict) \
+                    else {"type":"object","properties":{}}
+
+                tools.append({"type": "function",
+                              "name": name,
+                              "description": func.get("description",""),
+                              "parameters": params})
+
+            else:
+                tools.append(tool)
+
+        for tool in optional_params.get("default_tools") or []:
+            if tool["type"] == "mcp":
+                tool["server_url"] = tool["server_url"].format(**os.environ)
+
+                try:
+                    for k, v in tool["headers"].items():
+                        tool["headers"][k] = v.format(**os.environ)
+
+                except KeyError:
+                    pass
+
+                tools.append(tool)
+
+                continue
+
+            if tool["type"] in (x["type"] for x in tools):
+                continue
+
+            if tool["type"] == "web_search":
+                pass  # FIXME: find a function with the name "web_search". Skip if found
+
+            tools.append(tool)
 
         if tools:
             responses_params["tools"] = tools
 
         try:
             responses_params["reasoning"] = {
-                "effort": optional_params["reasoning_effort"]
-            }
+                "effort": optional_params["reasoning_effort"]}
         except KeyError:
             pass
 
-        conversation_id = self._get_conversation_id(messages)
-        new_conv_id = conversation_id is None
+        headers = headers or {}
+
+        librechat_conv_id = headers["X-Conversation-ID"]
+
+        conversation_id = self._cache.get_cache(
+            cache_key=librechat_conv_id + "|conv_id")
+
+        outbound_aclient = AsyncOpenAI(api_key=api_key)
 
         if not conversation_id:
             conversation_obj = await outbound_aclient.conversations.create()
             conversation_id = conversation_obj.id
 
+            self._cache.get_cache(
+                cache_key=librechat_conv_id + "|conv_id",
+                result=conversation_id)
+
             prefix = optional_params.get("response_prefix", "").strip()
 
             if prefix:
-                yield {
-                    "finish_reason": "",
-                    "index": 0,
-                    "is_finished": False,
-                    "text": prefix + "\n",
-                    "tool_use": None,
-                    "usage": None,
-                }
+                yield {"finish_reason": "",
+                       "index": 0,
+                       "is_finished": False,
+                       "text": prefix + "\n",
+                       "tool_use": None,
+                       "usage": None}
 
         responses_params["conversation"] = conversation_id
-
-        if new_conv_id:
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": f"`<conv_id={conversation_id}>`\n",
-                "tool_use": None,
-                "usage": None,
-            }
-
-        print("Outbound resp:")
-        print(responses_params)
 
         if background:
             response_task = asyncio.create_task(
                 self._background_responses(
                     outbound_aclient,
-                    (await outbound_aclient.responses.create(**responses_params)).id,
-                )
-            )
+                    (await outbound_aclient.responses.create(**responses_params)).id))
 
         else:
             response_task = asyncio.create_task(
-                outbound_aclient.responses.create(**responses_params)
-            )
+                outbound_aclient.responses.create(**responses_params))
 
         has_heartbeat = False
 
         while True:
             sleep_task = asyncio.create_task(
                 asyncio.sleep(
-                    optional_params.get("heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL)
-                )
-            )
+                    optional_params.get("heartbeat_interval",
+                                        DEFAULT_HEARTBEAT_INTERVAL)))
 
             done, _ = await asyncio.wait(
-                [response_task, sleep_task], return_when=asyncio.FIRST_COMPLETED
-            )
+                [response_task, sleep_task], return_when=asyncio.FIRST_COMPLETED)
 
             if response_task in done:
                 break
 
             has_heartbeat = True
 
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": optional_params.get("heartbeat_marker", DEFAULT_HEARTBEAT_MARKER),
-                "tool_use": None,
-                "usage": None,
-            }
+            yield {"finish_reason": "",
+                   "index": 0,
+                   "is_finished": False,
+                   "text": optional_params.get("heartbeat_marker",
+                                               DEFAULT_HEARTBEAT_MARKER),
+                   "tool_use": None,
+                   "usage": None}
 
         if has_heartbeat:
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": "\n",
-                "tool_use": None,
-                "usage": None,
-            }
+            yield {"finish_reason": "",
+                   "index": 0,
+                   "is_finished": False,
+                   "text": "\n",
+                   "tool_use": None,
+                   "usage": None}
 
-        response_obj = await response_task
+        response = await response_task
 
-        print("Response")
-        print(response_obj)
+        tool_calls: list[ChatCompletionToolCallChunk] = []
+        texts: list[str] = []
 
-        for item in _g(response_obj, "output") or []:
-            if _g(item, "type") == "function_call":
-                call_id = _g(item, "call_id")
-                self._call_id_to_conversation_id.add_cache(
-                    cache_key=call_id, result=conversation_id)
+        for item in response.output or []:
+            _type = item.type
 
-        async for ev in self._stream_chat_from_responses(response_obj):
-            yield ev
+            if _type == "function_call":
+                args = item.arguments
+                args_str = json.dumps(args,
+                                      ensure_ascii=False,
+                                      separators=(",", ":")) \
+                    if isinstance(args, (dict, list)) else (args or "{}")
+
+                tool_calls.append({"id": item.call_id,
+                                   "type": "function",
+                                   "function": {"name": item.name,
+                                                "arguments": args_str},
+                                   "index": len(tool_calls)})
+
+            if isinstance(item.content, str):
+                texts.append(item.content)
+
+            elif isinstance(item.content, list):
+                for x in item.content:
+                    if isinstance(x, dict) and x.get("type") == "text":
+                        texts.append(x.get("text") or "")
+
+            else:
+                raise ValueError(item.content)
+
+        usage = response.usage or {}
+
+        usage_prompt = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+        usage_completion = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+        usage_total = usage.get("total_tokens") or (usage_prompt + usage_completion)
+
+        if tool_calls:
+            for tc in tool_calls:
+                yield {"finish_reason": "",
+                       "index": 0,
+                       "is_finished": False,
+                       "text": "",
+                       "tool_use": tc,
+                       "usage": None}
+
+            yield {"finish_reason": "tool_calls",
+                   "index": 0,
+                   "is_finished": True,
+                   "text": "",
+                   "tool_use": None,
+                   "usage": {"prompt_tokens": int(usage_prompt),
+                             "completion_tokens": int(usage_completion),
+                             "total_tokens": int(usage_total)}}
+
+            return
+
+        if not texts:
+            texts = [str(response.output_text)]
+
+        for text in texts:
+            for i in range(0, len(text), STREAMING_CHUNK_SIZE):
+                yield {"finish_reason": "",
+                       "index": 0,
+                       "is_finished": False,
+                       "text": text[i:i+STREAMING_CHUNK_SIZE],
+                       "tool_use": None,
+                       "usage": None}
+
+        yield {"finish_reason": "stop",
+               "index": 0,
+               "is_finished": True,
+               "text": "",
+               "tool_use": None,
+               "usage": {"prompt_tokens": int(usage_prompt),
+                         "completion_tokens": int(usage_completion),
+                         "total_tokens": int(usage_total)}}
 
 
 class PerplexityBridge(CustomLLM):
 
-    def _format_search_results(self, search_results: list[dict[str, Any]] | None) -> str:
-        if not search_results:
-            return ""
-
-        formatted_results = ["\n## Sources:\n"]
-
-        for i, result in enumerate(search_results, 1):
-            title = result.get("title", "Unknown")
-            url = result.get("url", "")
-            date = result.get("date", "")
-
-            formatted_results.append(f"{i}. **{title}**")
-
-            if url:
-                formatted_results.append(f"   URL: {url}")
-
-            if date:
-                formatted_results.append(f"   Date: {date}")
-
-            formatted_results.append("")
-
-        return "\n".join(formatted_results)
-
-    def completion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> ModelResponse:
+    def completion(self,
+                   model: str,
+                   messages: list[dict[str, Any]],
+                   api_base: str,
+                   custom_prompt_dict: dict[str, Any],
+                   model_response: ModelResponse,
+                   print_verbose: Callable[..., None],
+                   encoding: Any,
+                   api_key: str | None,
+                   logging_obj: Any,
+                   optional_params: dict[str, Any],
+                   acompletion: Any = None,
+                   litellm_params: dict[str, Any] | None = None,
+                   logger_fn: Callable[..., Any] | None = None,
+                   headers: dict[str, Any] | None = None,
+                   timeout: float | httpx.Timeout | None = None,
+                   client: HTTPHandler | None = None) \
+                   -> ModelResponse:
         raise NotImplementedError()
 
-    async def acompletion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> ModelResponse:
+    async def acompletion(self,
+                          model: str,
+                          messages: list[dict[str, Any]],
+                          api_base: str,
+                          custom_prompt_dict: dict[str, Any],
+                          model_response: ModelResponse,
+                          print_verbose: Callable[..., None],
+                          encoding: Any,
+                          api_key: str | None,
+                          logging_obj: Any,
+                          optional_params: dict[str, Any],
+                          acompletion: Any = None,
+                          litellm_params: dict[str, Any] | None = None,
+                          logger_fn: Callable[..., Any] | None = None,
+                          headers: dict[str, Any] | None = None,
+                          timeout: float | httpx.Timeout | None = None,
+                          client: AsyncHTTPHandler | None = None) \
+                          -> ModelResponse:
         raise NotImplementedError()
 
-    def streaming(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> Iterator[GenericStreamingChunk]:
+    def streaming(self,
+                  model: str,
+                  messages: list[dict[str, Any]],
+                  api_base: str,
+                  custom_prompt_dict: dict[str, Any],
+                  model_response: ModelResponse,
+                  print_verbose: Callable[..., None],
+                  encoding: Any,
+                  api_key: str | None,
+                  logging_obj: Any,
+                  optional_params: dict[str, Any],
+                  acompletion: Any = None,
+                  litellm_params: dict[str, Any] | None = None,
+                  logger_fn: Callable[..., Any] | None = None,
+                  headers: dict[str, Any] | None = None,
+                  timeout: float | httpx.Timeout | None = None,
+                  client: HTTPHandler | None = None) \
+                  -> Iterator[GenericStreamingChunk]:
         raise NotImplementedError()
 
-    async def astreaming(  # pylint: disable=too-many-branches
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> AsyncIterator[GenericStreamingChunk]:
+    async def astreaming(self,
+                         model: str,
+                         messages: list[dict[str, Any]],
+                         api_base: str,
+                         custom_prompt_dict: dict[str, Any],
+                         model_response: ModelResponse,
+                         print_verbose: Callable[..., None],
+                         encoding: Any,
+                         api_key: str | None,
+                         logging_obj: Any,
+                         optional_params: dict[str, Any],
+                         acompletion: Any = None,
+                         litellm_params: dict[str, Any] | None = None,
+                         logger_fn: Callable[..., Any] | None = None,
+                         headers: dict[str, Any] | None = None,
+                         timeout: float | httpx.Timeout | None = None,
+                         client: AsyncHTTPHandler | None = None) \
+                         -> AsyncIterator[GenericStreamingChunk]:
         outbound_model = optional_params.pop("outbound_model")
 
         cut_think = optional_params.pop("cut_think", False)
 
         heartbeat_marker = optional_params.pop(
-            "heartbeat_marker", DEFAULT_HEARTBEAT_MARKER
-        )
+            "heartbeat_marker", DEFAULT_HEARTBEAT_MARKER)
         heartbeat_interval = optional_params.pop(
-            "heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL
-        )
+            "heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL)
 
-        completion_params = {
-            "model": f"perplexity/{outbound_model}",
-            "messages": messages,
-            "api_key": api_key,
-            "stream": True,
-            **optional_params,
-        }
+        completion_params = {"model": f"perplexity/{outbound_model}",
+                             "messages": messages,
+                             "api_key": api_key,
+                             "stream": True,
+                             **optional_params}
 
         stream_response = await litellm.acompletion(**completion_params)
+
+        if isinstance(stream_response, ModelResponse):
+            raise ValueError(stream_response)
 
         accumulated_search_results = None
 
@@ -798,8 +609,7 @@ class PerplexityBridge(CustomLLM):
         has_heartbeat = False
         last_heartbeat_time = 0.0
 
-        # dirty hack for basedpyright
-        async for chunk in cast(AsyncIterator[Any], stream_response):
+        async for chunk in stream_response:
             if hasattr(chunk, "search_results") and chunk.search_results:
                 accumulated_search_results = chunk.search_results
 
@@ -808,11 +618,9 @@ class PerplexityBridge(CustomLLM):
 
             delta = chunk.choices[0].delta
             content = getattr(delta, "content", "") or ""
-            finish_reason = chunk.choices[0].finish_reason
+            finish_reason = chunk.choices[0].finish_reason or ""
 
-            is_finished = finish_reason is not None
-
-            if not is_finished:
+            if not finish_reason:
                 if cut_think and not think_is_cut:
                     if "<think>" in content:
                         in_think = True
@@ -840,120 +648,126 @@ class PerplexityBridge(CustomLLM):
 
             else:
                 if accumulated_search_results:
-                    formatted_sources = self._format_search_results(
-                        accumulated_search_results
-                    )
-                    content = content + formatted_sources
+                    formatted_sources = ["\n## Sources:\n"]
 
-            if content is not None:
-                yield {
-                    "finish_reason": finish_reason,
-                    "index": 0,
-                    "is_finished": is_finished,
-                    "text": content,
-                    "tool_use": None,
-                    "usage": None,
-                }
+                    for i, result in enumerate(accumulated_search_results, 1):
+                        title = result.get("title", "Unknown")
+                        url = result.get("url", "")
+                        date = result.get("date", "")
+
+                        formatted_sources.append(f"{i}. **{title}**")
+
+                        if url:
+                            formatted_sources.append(f"   URL: {url}")
+
+                        if date:
+                            formatted_sources.append(f"   Date: {date}")
+
+                        formatted_sources.append("")
+
+                    content += "\n".join(formatted_sources)
+
+            if content:
+                yield {"finish_reason": finish_reason,
+                       "index": 0,
+                       "is_finished": bool(finish_reason),
+                       "text": content,
+                       "tool_use": None,
+                       "usage": None}
 
 
 class AgentRouter(CustomLLM):
 
-    def completion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> ModelResponse:
+    _cache = Cache()
+
+    def completion(self,
+                   model: str,
+                   messages: list[dict[str, Any]],
+                   api_base: str,
+                   custom_prompt_dict: dict[str, Any],
+                   model_response: ModelResponse,
+                   print_verbose: Callable[..., None],
+                   encoding: Any,
+                   api_key: str | None,
+                   logging_obj: Any,
+                   optional_params: dict[str, Any],
+                   acompletion: Any = None,
+                   litellm_params: dict[str, Any] | None = None,
+                   logger_fn: Callable[..., Any] | None = None,
+                   headers: dict[str, Any] | None = None,
+                   timeout: float | httpx.Timeout | None = None,
+                   client: HTTPHandler | None = None) \
+                   -> ModelResponse:
         raise NotImplementedError()
 
-    async def acompletion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> ModelResponse:
+    async def acompletion(self,
+                          model: str,
+                          messages: list[dict[str, Any]],
+                          api_base: str,
+                          custom_prompt_dict: dict[str, Any],
+                          model_response: ModelResponse,
+                          print_verbose: Callable[..., None],
+                          encoding: Any,
+                          api_key: str | None,
+                          logging_obj: Any,
+                          optional_params: dict[str, Any],
+                          acompletion: Any = None,
+                          litellm_params: dict[str, Any] | None = None,
+                          logger_fn: Callable[..., Any] | None = None,
+                          headers: dict[str, Any] | None = None,
+                          timeout: float | httpx.Timeout | None = None,
+                          client: AsyncHTTPHandler | None = None) \
+                          -> ModelResponse:
         raise NotImplementedError()
 
-    def streaming(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: HTTPHandler | None = None,
-    ) -> Iterator[GenericStreamingChunk]:
+    def streaming(self,
+                  model: str,
+                  messages: list[dict[str, Any]],
+                  api_base: str,
+                  custom_prompt_dict: dict[str, Any],
+                  model_response: ModelResponse,
+                  print_verbose: Callable[..., None],
+                  encoding: Any,
+                  api_key: str | None,
+                  logging_obj: Any,
+                  optional_params: dict[str, Any],
+                  acompletion: Any = None,
+                  litellm_params: dict[str, Any] | None = None,
+                  logger_fn: Callable[..., Any] | None = None,
+                  headers: dict[str, Any] | None = None,
+                  timeout: float | httpx.Timeout | None = None,
+                  client: HTTPHandler | None = None) \
+                  -> Iterator[GenericStreamingChunk]:
         raise NotImplementedError()
 
-    async def astreaming(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        api_base: str,
-        custom_prompt_dict: dict[str, Any],
-        model_response: ModelResponse,
-        print_verbose: Callable[..., None],
-        encoding: Any,
-        api_key: str | None,
-        logging_obj: Any,
-        optional_params: dict[str, Any],
-        acompletion: Any = None,
-        litellm_params: dict[str, Any] | None = None,
-        logger_fn: Callable[..., Any] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | httpx.Timeout | None = None,
-        client: AsyncHTTPHandler | None = None,
-    ) -> AsyncIterator[GenericStreamingChunk]:
+    async def astreaming(self,
+                         model: str,
+                         messages: list[dict[str, Any]],
+                         api_base: str,
+                         custom_prompt_dict: dict[str, Any],
+                         model_response: ModelResponse,
+                         print_verbose: Callable[..., None],
+                         encoding: Any,
+                         api_key: str | None,
+                         logging_obj: Any,
+                         optional_params: dict[str, Any],
+                         acompletion: Any = None,
+                         litellm_params: dict[str, Any] | None = None,
+                         logger_fn: Callable[..., Any] | None = None,
+                         headers: dict[str, Any] | None = None,
+                         timeout: float | httpx.Timeout | None = None,
+                         client: AsyncHTTPHandler | None = None) \
+                         -> AsyncIterator[GenericStreamingChunk]:
+        headers = headers or {}
+
         has_model_msg = False
-        routed_to_model = None
 
-        for message in messages:
-            if message["role"] != "assistant":
-                continue
-
-            match = re.search(r"<model=(.*?)>", str(message["content"]))
-
-            if match:
-                has_model_msg = True
-                routed_to_model = match.group(1)
+        routed_to_model = self._cache.get_cache(
+            cache_key=headers["X-Conversation-ID"] + "|model")
 
         if routed_to_model is None:
+            has_model_msg = True
+
             user_message = None
 
             for message in messages:
@@ -965,11 +779,8 @@ class AgentRouter(CustomLLM):
 
             response = await litellm.acompletion(
                 model="gpt-5-mini",
-                messages=[
-                    {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-            )
+                messages=[{"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                          {"role": "user", "content": user_message}])
 
             s = str(response.choices[0].message.content)
             match = re.search(r"<model>(.*?)</model>", s, flags=re.DOTALL)
@@ -980,26 +791,21 @@ class AgentRouter(CustomLLM):
             routed_to_model = "x-" + match.group(1).strip()
 
         if not has_model_msg:
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": f"`<model={routed_to_model}>`\n",
-                "tool_use": None,
-                "usage": None,
-            }
+            yield {"finish_reason": "",
+                   "index": 0,
+                   "is_finished": False,
+                   "text": f"_Routed to: {routed_to_model}_\n",
+                   "tool_use": None,
+                   "usage": None}
 
         proxy_client = AsyncOpenAI(
             base_url=(f'http://{os.environ["SERVER_HOST"]}:'
                       f'{os.environ["SERVER_PORT"]}/v1'),
-            api_key="dummy-api-key",
-        )
+            api_key="dummy-api-key")
 
-        request_params = {
-            "model": routed_to_model,
-            "messages": messages,
-            "stream": True,
-        }
+        request_params = {"model": routed_to_model,
+                          "messages": messages,
+                          "stream": True}
 
         if "max_tokens" in optional_params:
             request_params["max_tokens"] = optional_params["max_tokens"]
@@ -1021,14 +827,12 @@ class AgentRouter(CustomLLM):
             content = getattr(delta, "content", "")
             finish_reason = getattr(choice, "finish_reason", "")
 
-            yield {
-                "finish_reason": finish_reason,
-                "index": 0,
-                "is_finished": finish_reason is not None,
-                "text": content,
-                "tool_use": None,
-                "usage": getattr(chunk, "usage", None),
-            }
+            yield {"finish_reason": finish_reason,
+                   "index": 0,
+                   "is_finished": finish_reason is not None,
+                   "text": content,
+                   "tool_use": None,
+                   "usage": getattr(chunk, "usage", None)}
 
 
 openai_responses_bridge = OpenAIResponsesBridge()

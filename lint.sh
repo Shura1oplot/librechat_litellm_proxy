@@ -12,7 +12,7 @@ FAILED=()
 
 # Auto-format with black
 # shellcheck disable=SC2086
-black $PYTHON_FILES
+# black $PYTHON_FILES
 
 # Run linters
 echo "Running ruff..."

@@ -26,7 +26,6 @@
 - pylint - 10.0/10
 - basedpyright - 0 errors, 0 warnings
 - ruff - No errors/warnings
-- black - No formatting issues
 
 ### Shell scripts
 - POSIX shell compatibility
