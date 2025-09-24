@@ -20,6 +20,7 @@ import litellm
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk, ChatCompletionUsageBlock, ModelResponse
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
+from litellm.caching.caching import Cache
 
 
 _ = load_dotenv()
@@ -145,8 +146,7 @@ def _g(o: Any, k: Any, d: Any | None = None) -> Any:
 
 class OpenAIResponsesBridge(CustomLLM):
 
-    # FIXME: clear cache
-    _shared_call_id_to_conversation_id = {}
+    _call_id_to_conversation_id = Cache()
 
     @classmethod
     def _get_input_from_messages(
@@ -198,7 +198,8 @@ class OpenAIResponsesBridge(CustomLLM):
                 if not call_id:
                     raise ValueError(message)
 
-                conv_id = cls._shared_call_id_to_conversation_id.get(call_id)
+                conv_id = cast(str | None, cls._call_id_to_conversation_id.get_cache(
+                    cache_key=call_id))
 
                 if conv_id:
                     return conv_id
@@ -655,7 +656,8 @@ class OpenAIResponsesBridge(CustomLLM):
         for item in _g(response_obj, "output") or []:
             if _g(item, "type") == "function_call":
                 call_id = _g(item, "call_id")
-                self._shared_call_id_to_conversation_id[call_id] = conversation_id
+                self._call_id_to_conversation_id.add_cache(
+                    cache_key=call_id, result=conversation_id)
 
         async for ev in self._stream_chat_from_responses(response_obj):
             yield ev
