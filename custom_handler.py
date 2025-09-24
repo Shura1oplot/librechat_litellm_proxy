@@ -2,9 +2,10 @@
 
 import os
 import time
-from collections.abc import Iterator, AsyncIterator
+from collections.abc import Iterator, AsyncIterator, AsyncGenerator
 from typing import Any, Callable, cast
 from copy import deepcopy
+import json
 import re
 import asyncio
 
@@ -138,6 +139,10 @@ Decide one best model:
 """
 
 
+def _g(o: Any, k: Any, d: Any | None = None) -> Any:
+    return o.get(k, d) if isinstance(o, dict) else getattr(o, k, d)
+
+
 class OpenAIResponsesBridge(CustomLLM):
 
     @staticmethod
@@ -204,7 +209,7 @@ class OpenAIResponsesBridge(CustomLLM):
         default_tools: list[dict[str, Any]] | None,
         user_tools: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
-        tools = (cls._to_responses_tools(user_tools) or [])[:]
+        tools = (cls._chat_completion_tools_to_responses(user_tools) or [])[:]
 
         for tool in default_tools or []:
             if tool["type"] == "mcp":
@@ -228,45 +233,137 @@ class OpenAIResponsesBridge(CustomLLM):
         return tools
 
     @staticmethod
-    def _to_responses_tools(
-        legacy_tools: list[dict[str, Any]] | None, shape: str = "flat"
+    def _chat_completion_tools_to_responses(
+        tools: list[dict[str, Any]] | None
     ) -> list[dict[str, Any]] | None:
-        if not legacy_tools:
-            return legacy_tools
+        """
+        Chat Completions:
+          {"type":"function","function":{"name","description"?, "parameters"?}}
+        → Responses / GPT‑5 bridges (FunctionTool):
+          {"type":"function","name","description"?, "parameters":{...}}
+        """
+        if not tools:
+            return tools
 
-        responses_tools: list[dict[str, Any]] = []
+        out_tools = []
 
-        for t in legacy_tools:
+        for t in tools or []:
             if isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict):
                 f = t["function"]
                 name = f["name"]
-                desc = f.get("description", "")
-                params = f.get("parameters")
-                params = deepcopy(params) if isinstance(params, dict) else {"type": "object", "properties": {}}
 
-                if "type" not in params:
-                    params = {"type": "object", **params}
+                params = f.get("parameters") if isinstance(f.get("parameters"), dict) else {"type":"object","properties":{}}
 
-                if params.get("type") == "object" and "properties" not in params:
-                    params["properties"] = {}
-
-                if shape == "flat":
-                    responses_tools.append({"type": "function", "name": name, "description": desc, "parameters": params})
-
-                elif shape == "nested":
-                    responses_tools.append({"type": "function", "function": {"name": name, "description": desc, "parameters": params}})
-
-                else:
-                    raise ValueError("shape must be 'flat' or 'nested'")
-
-            elif isinstance(t, dict) and "input_schema" in t and t.get("name"):
-                params = t["input_schema"] if isinstance(t["input_schema"], dict) else {"type": "object", "properties": {}}
-                responses_tools.append({"type": "function", "name": t["name"], "description": t.get("description", ""), "parameters": deepcopy(params)})
+                out_tools.append({
+                    "type": "function",
+                    "name": name,
+                    "description": f.get("description",""),
+                    "parameters": deepcopy(params)
+                })
 
             else:
-                responses_tools.append(deepcopy(t))
+                out_tools.append(deepcopy(t))
 
-        return responses_tools
+        return out_tools
+
+    @staticmethod
+    def _extract_from_responses(
+        resp: Any
+    ) -> tuple[list[dict[str, Any]], str, dict[str, Any], str]:
+        output = _g(resp, "output") or []
+        tool_calls: list[dict[str, Any]] = []
+        texts: list[str] = []
+
+        for item in output:
+            itype = _g(item, "type")
+
+            # function/tool call items
+            if itype in ("function_call", "tool_call", "tool_use"):
+                name = _g(item, "name")
+
+                if not name:
+                    # FIXME: warning
+                    continue
+
+                call_id = _g(item, "call_id") or _g(item, "id") or f"call_{len(tool_calls)+1}"
+                args = _g(item, "arguments")
+                args_str = json.dumps(args, ensure_ascii=False, separators=(",", ":")) if isinstance(args, (dict, list)) else (args or "{}")
+                tool_calls.append({"id": call_id, "type": "function", "function": {"name": name, "arguments": args_str}})
+
+            # collect any text fragments
+            ci = _g(item, "content")
+
+            if isinstance(ci, str):
+                texts.append(ci)
+
+            elif isinstance(ci, list):
+                for c in ci:
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        texts.append(c.get("text") or "")
+
+        # fallback to output_text
+        if not texts:
+            ot = _g(resp, "output_text")
+            if isinstance(ot, str):
+                texts = [ot]
+
+        text = "".join(texts)
+        usage = _g(resp, "usage") or {}
+
+        if tool_calls:
+            return tool_calls, "", usage, "tool_calls"
+
+        return [], text, usage, "stop"
+
+    async def _stream_chat_from_responses(
+        self, resp: Any, chunk_size: int = STREAMING_CHUNK_SIZE
+    ) -> AsyncGenerator[GenericStreamingChunk, None]:
+        tool_calls, text, usage, finish_reason = self._extract_from_responses(resp)
+
+        # If the model issued tool calls, emit them first and finish.
+        if tool_calls:
+            for tc in tool_calls:
+                yield {
+                    "finish_reason": "",
+                    "index": 0,
+                    "is_finished": False,
+                    "text": "",
+                    "tool_use": tc,   # <-- Chat Completions-style tool call
+                    "usage": None,
+                }
+
+            yield {
+                "finish_reason": finish_reason,  # "tool_calls"
+                "index": 0,
+                "is_finished": True,
+                "text": "",
+                "tool_use": None,
+                "usage": usage or None,
+            }
+
+            return
+
+        # Otherwise stream text chunks.
+        if text:
+            for i in range(0, len(text), chunk_size):
+                yield {
+                    "finish_reason": "",
+                    "index": 0,
+                    "is_finished": False,
+                    "text": text[i:i+chunk_size],
+                    "tool_use": None,
+                    "usage": None,
+                }
+
+        # Final frame with usage.
+        yield {
+            "finish_reason": finish_reason,  # "stop" when only text
+            "index": 0,
+            "is_finished": True,
+            "text": "",
+            "tool_use": None,
+            "usage": usage or None,
+        }
 
     def completion(
         self,
@@ -469,30 +566,8 @@ class OpenAIResponsesBridge(CustomLLM):
                 "usage": None,
             }
 
-        output_text = self._extract_response_text(await response_task)
-
-        for i in range(0, len(output_text), STREAMING_CHUNK_SIZE):
-            chunk_text = output_text[i : i + STREAMING_CHUNK_SIZE]
-
-            yield {
-                "finish_reason": "",
-                "index": 0,
-                "is_finished": False,
-                "text": chunk_text,
-                "tool_use": None,
-                "usage": None,
-            }
-
-            await asyncio.sleep(STREAMING_CHUNK_DELAY)
-
-        yield {
-            "finish_reason": "stop",
-            "index": 0,
-            "is_finished": True,
-            "text": "",
-            "tool_use": None,
-            "usage": None,
-        }
+        async for ev in self._stream_chat_from_responses(await response_task):
+            yield ev
 
 
 class PerplexityBridge(CustomLLM):
