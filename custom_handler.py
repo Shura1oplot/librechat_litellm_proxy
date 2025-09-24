@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Iterator, AsyncIterator
 from typing import Any, Callable, cast
+from copy import deepcopy
 import re
 import asyncio
 
@@ -197,12 +198,13 @@ class OpenAIResponsesBridge(CustomLLM):
 
             raise ValueError(response)
 
-    @staticmethod
+    @classmethod
     def _get_tools(
+        cls,
         default_tools: list[dict[str, Any]] | None,
         user_tools: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
-        tools = (user_tools or [])[:]
+        tools = (cls._to_responses_tools(user_tools) or [])[:]
 
         for tool in default_tools or []:
             if tool["type"] == "mcp":
@@ -224,6 +226,48 @@ class OpenAIResponsesBridge(CustomLLM):
             tools.append(tool)
 
         return tools
+
+    @staticmethod
+    def _to_responses_tools(
+        legacy_tools: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]] | None:
+
+        if not legacy_tools:
+            return None
+
+        responses_tools: list[dict[str, Any]] = []
+
+        for t in legacy_tools:
+            if isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict):
+                f = t["function"]
+                name = f["name"]
+
+                desc = f.get("description", "")
+
+                params = f.get("parameters")
+                params = deepcopy(params) if isinstance(params, dict) else {"type": "object", "properties": {}}
+
+                if "type" not in params:
+                    if "properties" in params or "required" in params:
+                        params = {"type": "object", **params}
+
+                    else:
+                        params = {"type": "object", "properties": {}}
+
+                if params.get("type") == "object" and "properties" not in params:
+                    params["properties"] = {}
+
+                responses_tools.append({
+                    "type": "custom",
+                    "name": name,
+                    "description": desc,
+                    "input_schema": params
+                })
+
+            else:
+                responses_tools.append(deepcopy(t))
+
+        return responses_tools
 
     def completion(
         self,
@@ -371,7 +415,7 @@ class OpenAIResponsesBridge(CustomLLM):
                 "finish_reason": "",
                 "index": 0,
                 "is_finished": False,
-                "text": f"<conv_id={conversation_id}>\n",
+                "text": f"`<conv_id={conversation_id}>`\n",
                 "tool_use": None,
                 "usage": None,
             }
@@ -773,7 +817,7 @@ class AgentRouter(CustomLLM):
                 "finish_reason": "",
                 "index": 0,
                 "is_finished": False,
-                "text": f"<model={routed_to_model}>\n",
+                "text": f"`<model={routed_to_model}>`\n",
                 "tool_use": None,
                 "usage": None,
             }

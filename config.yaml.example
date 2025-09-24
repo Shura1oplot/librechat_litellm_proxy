@@ -15,23 +15,9 @@ model_list:
         - tools
       default_tools:
         - type: web_search
-        - type: mcp
-          server_label: tavily
-          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: context7
-          server_url: "https://mcp.context7.com/mcp"
-          headers:
-            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: deepwiki
-          server_url: "https://mcp.deepwiki.com/sse"
-          require_approval: never
       outbound_model: gpt-5
       default_verbosity: low
-      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+      response_prefix: "_Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row._"
 
   - model_name: x-gpt-5-thinking
     litellm_params:
@@ -44,23 +30,9 @@ model_list:
       reasoning_effort: medium
       default_tools:
         - type: web_search
-        - type: mcp
-          server_label: tavily
-          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: context7
-          server_url: "https://mcp.context7.com/mcp"
-          headers:
-            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: deepwiki
-          server_url: "https://mcp.deepwiki.com/sse"
-          require_approval: never
       outbound_model: gpt-5
       default_verbosity: low
-      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+      response_prefix: "_Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row._"
   
   - model_name: x-gpt-5-thinking-high
     litellm_params:
@@ -73,24 +45,10 @@ model_list:
       reasoning_effort: high
       default_tools:
         - type: web_search
-        - type: mcp
-          server_label: tavily
-          server_url: "https://mcp.tavily.com/mcp/?tavilyApiKey={TAVILY_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: context7
-          server_url: "https://mcp.context7.com/mcp"
-          headers:
-            CONTEXT7_API_KEY: "{CONTEXT7_API_KEY}"
-          require_approval: never
-        - type: mcp
-          server_label: deepwiki
-          server_url: "https://mcp.deepwiki.com/sse"
-          require_approval: never
       outbound_model: gpt-5
       background: true
       default_verbosity: low
-      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+      response_prefix: "_Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row._"
 
   - model_name: gpt-5-mini
     litellm_params:
@@ -107,7 +65,7 @@ model_list:
         - type: web_search_preview
       outbound_model: o4-mini-deep-research
       background: true
-      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+      response_prefix: "_Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row._"
 
   - model_name: x-o3-deep-research
     litellm_params:
@@ -119,7 +77,7 @@ model_list:
         - type: web_search_preview
       outbound_model: o3-deep-research
       background: true
-      response_prefix: "Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row."
+      response_prefix: "_Test mode. Not supported: attach documents and images, edit or delete messages, regenerate responses, duplicate chats, switch models, send two messages in a row._"
 
   # Perplexity
 
