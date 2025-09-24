@@ -148,7 +148,7 @@ class OpenAIResponsesBridge(CustomLLM):
     @classmethod
     def _get_input_from_messages(
         cls, messages: list[dict[str, Any]]
-    ) -> str | dict[str, Any]:
+    ) -> str | list[dict[str, Any]]:
         for message in reversed(messages):
             if message["role"] == "user":
                 return str(message["content"])
@@ -159,11 +159,11 @@ class OpenAIResponsesBridge(CustomLLM):
                 if not call_id:
                     raise ValueError(message)
 
-                return {
+                return [{
                     "type": "function_call_output",
                     "call_id": call_id,
                     "output": cls._content_to_text(message.get("content"))
-                }
+                }]
 
         raise ValueError(messages)
 
@@ -506,6 +506,9 @@ class OpenAIResponsesBridge(CustomLLM):
         timeout: float | httpx.Timeout | None = None,
         client: AsyncHTTPHandler | None = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
+        print("Input:")
+        print(messages)
+
         outbound_aclient = AsyncOpenAI(api_key=api_key)
 
         background = optional_params.get("background", False)
@@ -575,6 +578,9 @@ class OpenAIResponsesBridge(CustomLLM):
                 "usage": None,
             }
 
+        print("Input resp:")
+        print(responses_params)
+
         if background:
             response_task = asyncio.create_task(
                 self._background_responses(
@@ -625,7 +631,9 @@ class OpenAIResponsesBridge(CustomLLM):
                 "usage": None,
             }
 
-        async for ev in self._stream_chat_from_responses(await response_task):
+        response_obj = await response_task
+
+        async for ev in self._stream_chat_from_responses(response_obj):
             yield ev
 
 
