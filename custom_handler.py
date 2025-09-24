@@ -229,11 +229,10 @@ class OpenAIResponsesBridge(CustomLLM):
 
     @staticmethod
     def _to_responses_tools(
-        legacy_tools: list[dict[str, Any]] | None
+        legacy_tools: list[dict[str, Any]] | None, shape: str = "flat"
     ) -> list[dict[str, Any]] | None:
-
         if not legacy_tools:
-            return None
+            return legacy_tools
 
         responses_tools: list[dict[str, Any]] = []
 
@@ -241,28 +240,28 @@ class OpenAIResponsesBridge(CustomLLM):
             if isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict):
                 f = t["function"]
                 name = f["name"]
-
                 desc = f.get("description", "")
-
                 params = f.get("parameters")
                 params = deepcopy(params) if isinstance(params, dict) else {"type": "object", "properties": {}}
 
                 if "type" not in params:
-                    if "properties" in params or "required" in params:
-                        params = {"type": "object", **params}
-
-                    else:
-                        params = {"type": "object", "properties": {}}
+                    params = {"type": "object", **params}
 
                 if params.get("type") == "object" and "properties" not in params:
                     params["properties"] = {}
 
-                responses_tools.append({
-                    "type": "custom",
-                    "name": name,
-                    "description": desc,
-                    "input_schema": params
-                })
+                if shape == "flat":
+                    responses_tools.append({"type": "function", "name": name, "description": desc, "parameters": params})
+
+                elif shape == "nested":
+                    responses_tools.append({"type": "function", "function": {"name": name, "description": desc, "parameters": params}})
+
+                else:
+                    raise ValueError("shape must be 'flat' or 'nested'")
+
+            elif isinstance(t, dict) and "input_schema" in t and t.get("name"):
+                params = t["input_schema"] if isinstance(t["input_schema"], dict) else {"type": "object", "properties": {}}
+                responses_tools.append({"type": "function", "name": t["name"], "description": t.get("description", ""), "parameters": deepcopy(params)})
 
             else:
                 responses_tools.append(deepcopy(t))
