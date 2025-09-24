@@ -145,18 +145,43 @@ def _g(o: Any, k: Any, d: Any | None = None) -> Any:
 
 class OpenAIResponsesBridge(CustomLLM):
 
-    @staticmethod
-    def _get_input_from_messages(messages: list[dict[str, Any]]) -> str:
+    @classmethod
+    def _get_input_from_messages(
+        cls, messages: list[dict[str, Any]]
+    ) -> str | dict[str, Any]:
         for message in reversed(messages):
             if message["role"] == "user":
                 return str(message["content"])
 
+            if message["role"] == "tool":
+                call_id = message.get("tool_call_id") or message.get("id")
+
+                if not call_id:
+                    raise ValueError(message)
+
+                return {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": cls._content_to_text(message.get("content"))
+                }
+
         raise ValueError(messages)
 
     @staticmethod
-    def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
-        print(messages)
+    def _content_to_text(c: Any) -> str:
+        if isinstance(c, str):
+            return c
 
+        if isinstance(c, list):
+            return "".join(p.get("text","") for p in c if isinstance(p, dict) and p.get("type") in ("text","input_text","output_text"))
+
+        if isinstance(c, dict) and "text" in c:
+            return str(c["text"])
+
+        return str(c)
+
+    @staticmethod
+    def _get_conversation_id(messages: list[dict[str, Any]]) -> str | None:
         for message in messages:
             if message["role"] == "assistant":
                 match = re.search(r"<conv_id=(.*?)>", str(message["content"]))
