@@ -288,7 +288,6 @@ class OpenAIResponsesBridge(CustomLLM):
 
                 elif isinstance(t, dict) and "text" in t:
                     t = t["text"]
-
                 else:
                     t = str(t)
 
@@ -378,7 +377,7 @@ class OpenAIResponsesBridge(CustomLLM):
 
                 if not has_web_search:
                     tools.append(tool)
-                
+
                 continue
 
             tools.append(tool)
@@ -488,7 +487,17 @@ class OpenAIResponsesBridge(CustomLLM):
                 elif isinstance(item.content, list):
                     for x in item.content:
                         if isinstance(x, dict) and x.get("type") == "text":
-                            texts.append(x.get("text") or "")
+                            texts.append(x["text"])
+
+                            if "annotations" in x:
+                                texts.append("\n\nSources:\n")
+
+                                for i, a in enumerate(x["annotations"], 1):
+                                    if a["type"] != "url_citation":
+                                        continue
+
+                                    texts.append(f'{i}. {a["title"]}\n')
+                                    texts.append(f'   {a["url"]}\n\n')
 
             except AttributeError:
                 pass
@@ -829,7 +838,7 @@ class AgentRouter(CustomLLM):
                 raise ValueError(s)
 
             routed_to_model = "x-" + match.group(1).strip()
-        
+
             self._cache[librechat_conv_id] = routed_to_model
 
         if not has_model_msg:
@@ -857,6 +866,9 @@ class AgentRouter(CustomLLM):
 
         if "search_context_size" in optional_params:
             request_params["search_context_size"] = optional_params["search_context_size"]
+
+        if headers:
+            request_params["extra_headers"] = headers
 
         stream_response = await proxy_client.chat.completions.create(**request_params)
 
