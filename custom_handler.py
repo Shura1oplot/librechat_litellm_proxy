@@ -245,8 +245,33 @@ class OpenAIResponsesBridge(CustomLLM):
 
         for message in reversed(messages):
             if message["role"] == "user":
-                input_ = str(message["content"])
-                break
+                content = message["content"]
+
+                if isinstance(content, str):
+                    input_ = content
+                    break
+
+                if isinstance(content, list):
+                    input_ = []
+
+                    for content_item in content:
+                        type_ = content_item["type"]
+
+                        if type_ == "input_text":
+                            input_.append(content_item)
+                            continue
+
+                        if type_ == "image_url":
+                            input_.append({
+                                "type": "input_image",
+                                "image_url": content_item["image_url"]["url"]})
+                            continue
+
+                        raise ValueError(content_item)
+
+                    break
+
+                raise ValueError(message)
 
             if message["role"] == "tool":
                 t = message.get("content", "")
@@ -265,7 +290,7 @@ class OpenAIResponsesBridge(CustomLLM):
                 input_ = [{"type": "function_call_output",
                            "call_id": message["tool_call_id"],
                            "output": t}]
-                
+
                 break
 
         if not input_:
