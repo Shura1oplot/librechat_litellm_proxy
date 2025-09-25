@@ -252,22 +252,27 @@ class OpenAIResponsesBridge(CustomLLM):
                     break
 
                 if isinstance(content, list):
-                    input_ = []
+                    content_out = []
 
                     for content_item in content:
                         type_ = content_item["type"]
 
-                        if type_ == "input_text":
-                            input_.append(content_item)
+                        if type_ == "text":
+                            content_out.append({
+                                "type": "input_text",
+                                "text": content_item["text"]})
                             continue
 
                         if type_ == "image_url":
-                            input_.append({
+                            content_out.append({
                                 "type": "input_image",
                                 "image_url": content_item["image_url"]["url"]})
                             continue
 
                         raise ValueError(content_item)
+
+                    input_ = [{"role": "user",
+                               "content": content_out}]
 
                     break
 
