@@ -339,7 +339,15 @@ class OpenAIResponsesBridge(CustomLLM):
                 continue
 
             if tool["type"] == "web_search":
-                pass  # FIXME: find a function with the name "web_search". Skip if found
+                has_web_search = False
+
+                for x in tools:
+                    if x["type"] == "function" and x["name"] == "web_search":
+                        has_web_search = True
+                        break
+
+                if not has_web_search:
+                    tools.append(tool)
 
             tools.append(tool)
 
