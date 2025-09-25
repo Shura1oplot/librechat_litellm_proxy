@@ -397,6 +397,20 @@ class OpenAIResponsesBridge(CustomLLM):
         except KeyError:
             pass
 
+        # Not supported by gpt-5
+        # try:
+        #     responses_params["temperature"] = optional_params["temperature"]
+        # except KeyError:
+        #     pass
+
+        try:
+            responses_params["max_completion_tokens"] = optional_params["max_completion_tokens"]
+        except KeyError:
+            try:
+                responses_params["max_completion_tokens"] = optional_params["max_tokens"]
+            except KeyError:
+                pass
+
         headers = headers or {}
 
         librechat_conv_id = headers["x-librechat-conversation-id"]
@@ -408,7 +422,7 @@ class OpenAIResponsesBridge(CustomLLM):
 
         conversation_id = None
 
-        if (await r.exists(librechat_conv_id)):
+        if await r.exists(librechat_conv_id):
             conversation_id = await r.get(librechat_conv_id)
 
         outbound_aclient = AsyncOpenAI(api_key=api_key)
@@ -829,10 +843,10 @@ class AgentRouter(CustomLLM):
                         port=int(os.environ["REDIS_PORT"]),
                         db=REDIS_DB_ROUTER,
                         decode_responses=True)
-        
+
         routed_to_model = None
 
-        if (await r.exists(librechat_conv_id)):
+        if await r.exists(librechat_conv_id):
             routed_to_model = await r.get(librechat_conv_id)
 
         if not routed_to_model:
