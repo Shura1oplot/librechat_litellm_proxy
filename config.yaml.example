@@ -221,4 +221,6 @@ litellm_settings:
 
 
 general_settings:
+  forward_client_headers_to_llm_api: true
   enable_preview_features: true
+

@@ -17,7 +17,6 @@ from litellm.types.utils import (GenericStreamingChunk,
                                  ModelResponse)
 from litellm.llms.custom_httpx.http_handler import (AsyncHTTPHandler,
                                                     HTTPHandler)
-from litellm.caching.caching import Cache
 
 import httpx
 
@@ -63,7 +62,7 @@ benchmark vs competitors/ market/ proxies; cite sources.
 
 # Research tasks
 - Provide source links. Prefer primary sources.
-- Facts are time‑sensitive. Write the year near the link.
+- Facts are time sensitive. Write the year near the link.
 - For software, include the last update date and exclude abandoned projects.
 - Treat my list as illustrative if I write “etc.”; add 2–5 relevant examples \
 within scope.
@@ -144,7 +143,7 @@ Decide one best model:
 
 class OpenAIResponsesBridge(CustomLLM):
 
-    _cache = Cache()
+    _cache = {}
 
     @staticmethod
     async def _background_responses(aclient: AsyncOpenAI,
@@ -266,6 +265,8 @@ class OpenAIResponsesBridge(CustomLLM):
                 input_ = [{"type": "function_call_output",
                            "call_id": message["tool_call_id"],
                            "output": t}]
+                
+                break
 
         if not input_:
             raise ValueError(messages)
@@ -353,10 +354,9 @@ class OpenAIResponsesBridge(CustomLLM):
 
         headers = headers or {}
 
-        librechat_conv_id = headers["X-Conversation-ID"]
+        librechat_conv_id = headers["x-librechat-conversation-id"]
 
-        conversation_id = self._cache.get_cache(
-            cache_key=librechat_conv_id + "|conv_id")
+        conversation_id = self._cache.get(librechat_conv_id)
 
         outbound_aclient = AsyncOpenAI(api_key=api_key)
 
@@ -364,9 +364,7 @@ class OpenAIResponsesBridge(CustomLLM):
             conversation_obj = await outbound_aclient.conversations.create()
             conversation_id = conversation_obj.id
 
-            self._cache.get_cache(
-                cache_key=librechat_conv_id + "|conv_id",
-                result=conversation_id)
+            self._cache[librechat_conv_id] = conversation_id
 
             prefix = optional_params.get("response_prefix", "").strip()
 
@@ -443,22 +441,23 @@ class OpenAIResponsesBridge(CustomLLM):
                                                 "arguments": args_str},
                                    "index": len(tool_calls)})
 
-            if isinstance(item.content, str):
-                texts.append(item.content)
+            try:
+                if isinstance(item.content, str):
+                    texts.append(item.content)
 
-            elif isinstance(item.content, list):
-                for x in item.content:
-                    if isinstance(x, dict) and x.get("type") == "text":
-                        texts.append(x.get("text") or "")
+                elif isinstance(item.content, list):
+                    for x in item.content:
+                        if isinstance(x, dict) and x.get("type") == "text":
+                            texts.append(x.get("text") or "")
 
-            else:
-                raise ValueError(item.content)
+            except AttributeError:
+                pass
 
         usage = response.usage or {}
 
-        usage_prompt = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-        usage_completion = usage.get("output_tokens") or usage.get("completion_tokens") or 0
-        usage_total = usage.get("total_tokens") or (usage_prompt + usage_completion)
+        usage_prompt = usage.input_tokens or usage.prompt_tokens or 0
+        usage_completion = usage.output_tokens or usage.completion_tokens or 0
+        usage_total = usage.total_tokens or (usage_prompt + usage_completion)
 
         if tool_calls:
             for tc in tool_calls:
@@ -678,7 +677,7 @@ class PerplexityBridge(CustomLLM):
 
 class AgentRouter(CustomLLM):
 
-    _cache = Cache()
+    _cache = {}
 
     def completion(self,
                    model: str,
@@ -762,8 +761,9 @@ class AgentRouter(CustomLLM):
 
         has_model_msg = False
 
-        routed_to_model = self._cache.get_cache(
-            cache_key=headers["X-Conversation-ID"] + "|model")
+        librechat_conv_id = headers["x-librechat-conversation-id"]
+
+        routed_to_model = self._cache.get(librechat_conv_id)
 
         if routed_to_model is None:
             has_model_msg = True
@@ -789,6 +789,8 @@ class AgentRouter(CustomLLM):
                 raise ValueError(s)
 
             routed_to_model = "x-" + match.group(1).strip()
+        
+            self._cache[librechat_conv_id] = routed_to_model
 
         if not has_model_msg:
             yield {"finish_reason": "",
