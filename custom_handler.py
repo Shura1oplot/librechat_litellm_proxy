@@ -480,27 +480,28 @@ class OpenAIResponsesBridge(CustomLLM):
                                                 "arguments": args_str},
                                    "index": len(tool_calls)})
 
-            try:
-                if isinstance(item.content, str):
-                    texts.append(item.content)
+            if not hasattr(item, "content"):
+                continue
 
-                elif isinstance(item.content, list):
-                    for x in item.content:
-                        if isinstance(x, dict) and x.get("type") == "text":
-                            texts.append(x["text"])
+            if isinstance(item.content, str):
+                texts.append(item.content)
 
-                            if "annotations" in x:
-                                texts.append("\n\nSources:\n")
+            elif isinstance(item.content, list):
+                print(item.content)
 
-                                for i, a in enumerate(x["annotations"], 1):
-                                    if a["type"] != "url_citation":
-                                        continue
+                for x in item.content:
+                    if isinstance(x, dict) and x.get("type") == "text":
+                        texts.append(x["text"])
 
-                                    texts.append(f'{i}. {a["title"]}\n')
-                                    texts.append(f'   {a["url"]}\n\n')
+                        if "annotations" in x:
+                            texts.append("\n\nSources:\n")
 
-            except AttributeError:
-                pass
+                            for i, a in enumerate(x["annotations"], 1):
+                                if a["type"] != "url_citation":
+                                    continue
+
+                                texts.append(f'{i}. {a["title"]}\n')
+                                texts.append(f'   {a["url"]}\n\n')
 
         usage = response.usage or {}
 
