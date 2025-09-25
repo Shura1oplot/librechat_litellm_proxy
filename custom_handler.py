@@ -378,6 +378,8 @@ class OpenAIResponsesBridge(CustomLLM):
 
                 if not has_web_search:
                     tools.append(tool)
+                
+                continue
 
             tools.append(tool)
 
