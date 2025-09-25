@@ -886,7 +886,17 @@ class AgentRouter(CustomLLM):
             request_params["search_context_size"] = optional_params["search_context_size"]
 
         if "tools" in optional_params:
-            request_params["tools"] = optional_params["tools"]
+            if routed_to_model.startswith("x-perplexity"):
+                yield {"finish_reason": "",
+                       "index": 0,
+                       "is_finished": False,
+                       "text": ("_Perpexity does not support custom Librechat tools "
+                                "(File Search, Interpreter), they are disabled for this dialog._\n"),
+                       "tool_use": None,
+                       "usage": None}
+            
+            else:
+                request_params["tools"] = optional_params["tools"]
 
         if headers:
             request_params["extra_headers"] = headers
