@@ -487,8 +487,6 @@ class OpenAIResponsesBridge(CustomLLM):
                 texts.append(item.content)
 
             elif isinstance(item.content, list):
-                print(item.content)
-
                 for x in item.content:
                     if isinstance(x, dict) and x.get("type") == "text":
                         texts.append(x["text"])

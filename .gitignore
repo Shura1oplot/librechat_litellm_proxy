@@ -212,3 +212,4 @@ docs_and_repos/
 .claude
 .serena
 config.yaml
+log.txt
