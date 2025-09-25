@@ -23,6 +23,8 @@ import httpx
 from openai import AsyncOpenAI
 from openai.types.responses import Response
 
+import redis.asyncio as redis
+
 
 _ = load_dotenv()
 
@@ -35,6 +37,9 @@ STREAMING_CHUNK_SIZE = 50
 STREAMING_CHUNK_DELAY = 0.02
 
 BACKGROUND_POLL_INTERVAL = 5.0
+
+REDIS_DB_OPENAI = 0
+REDIS_DB_ROUTER = 1
 
 DEFAULT_SYSTEM_PROMPT = """\
 # Communication style
@@ -142,8 +147,6 @@ Decide one best model:
 
 
 class OpenAIResponsesBridge(CustomLLM):
-
-    _cache = {}
 
     @staticmethod
     async def _background_responses(aclient: AsyncOpenAI,
@@ -395,7 +398,15 @@ class OpenAIResponsesBridge(CustomLLM):
 
         librechat_conv_id = headers["x-librechat-conversation-id"]
 
-        conversation_id = self._cache.get(librechat_conv_id)
+        r = redis.Redis(host=os.environ["REDIS_HOST"],
+                        port=int(os.environ["REDIS_PORT"]),
+                        db=REDIS_DB_OPENAI,
+                        decode_responses=True)
+
+        conversation_id = None
+
+        if (await r.exists(librechat_conv_id)):
+            conversation_id = await r.get(librechat_conv_id)
 
         outbound_aclient = AsyncOpenAI(api_key=api_key)
 
@@ -403,7 +414,7 @@ class OpenAIResponsesBridge(CustomLLM):
             conversation_obj = await outbound_aclient.conversations.create()
             conversation_id = conversation_obj.id
 
-            self._cache[librechat_conv_id] = conversation_id
+            await r.set(librechat_conv_id, conversation_id)
 
             prefix = optional_params.get("response_prefix", "").strip()
 
@@ -414,6 +425,8 @@ class OpenAIResponsesBridge(CustomLLM):
                        "text": prefix + "\n",
                        "tool_use": None,
                        "usage": None}
+
+        await r.aclose()
 
         responses_params["conversation"] = conversation_id
 
@@ -725,8 +738,6 @@ class PerplexityBridge(CustomLLM):
 
 class AgentRouter(CustomLLM):
 
-    _cache = {}
-
     def completion(self,
                    model: str,
                    messages: list[dict[str, Any]],
@@ -807,14 +818,22 @@ class AgentRouter(CustomLLM):
                          -> AsyncIterator[GenericStreamingChunk]:
         headers = headers or {}
 
-        has_model_msg = False
+        need_model_msg = False
 
         librechat_conv_id = headers["x-librechat-conversation-id"]
 
-        routed_to_model = self._cache.get(librechat_conv_id)
+        r = redis.Redis(host=os.environ["REDIS_HOST"],
+                        port=int(os.environ["REDIS_PORT"]),
+                        db=REDIS_DB_ROUTER,
+                        decode_responses=True)
+        
+        routed_to_model = None
 
-        if routed_to_model is None:
-            has_model_msg = True
+        if (await r.exists(librechat_conv_id)):
+            routed_to_model = await r.get(librechat_conv_id)
+
+        if not routed_to_model:
+            need_model_msg = True
 
             user_message = None
 
@@ -838,9 +857,9 @@ class AgentRouter(CustomLLM):
 
             routed_to_model = "x-" + match.group(1).strip()
 
-            self._cache[librechat_conv_id] = routed_to_model
+            await r.set(librechat_conv_id, routed_to_model)
 
-        if not has_model_msg:
+        if need_model_msg:
             yield {"finish_reason": "",
                    "index": 0,
                    "is_finished": False,
@@ -866,9 +885,12 @@ class AgentRouter(CustomLLM):
         if "search_context_size" in optional_params:
             request_params["search_context_size"] = optional_params["search_context_size"]
 
+        if "tools" in optional_params:
+            request_params["tools"] = optional_params["tools"]
+
         if headers:
             request_params["extra_headers"] = headers
-
+        
         stream_response = await proxy_client.chat.completions.create(**request_params)
 
         async for chunk in stream_response:
